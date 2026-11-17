@@ -32,12 +32,19 @@ Priority order (highest first)
   e. label, alphabetically (a pure tie-break so results are deterministic).
 
 The ordering is total, so the result does not depend on input order.
+
+Cost
+----
+Only spans that overlap can interact, so candidates are first grouped into
+clusters of transitively overlapping spans (one sort and one sweep). The
+pairwise rules then run inside each cluster, which holds a handful of spans
+regardless of document length. Overall cost is O(n log n).
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 from pii_extract.spans import Span, iou
@@ -56,6 +63,20 @@ class Candidate:
 def _priority(candidate: Candidate) -> tuple:
     span = candidate.span
     return (candidate.clipped, -span.score, -span.length, span.start, span.label)
+
+
+def _overlap_clusters(candidates: Iterable[Candidate]) -> Iterator[list[Candidate]]:
+    """Group candidates into maximal runs of transitively overlapping spans."""
+    cluster: list[Candidate] = []
+    reach = -1  # furthest end offset seen in the current cluster
+    for candidate in sorted(candidates, key=lambda c: (c.span.start, c.span.end)):
+        if cluster and candidate.span.start >= reach:
+            yield cluster
+            cluster = []
+        cluster.append(candidate)
+        reach = max(reach, candidate.span.end)
+    if cluster:
+        yield cluster
 
 
 def _suppress_duplicates(candidates: list[Candidate], iou_threshold: float) -> list[Candidate]:
@@ -117,8 +138,11 @@ def merge_spans(
 
     per_label: list[Candidate] = []
     for group in by_label.values():
-        survivors = _suppress_duplicates(group, iou_threshold)
-        per_label.extend(_union_overlapping(survivors, text))
+        for cluster in _overlap_clusters(group):
+            survivors = _suppress_duplicates(cluster, iou_threshold)
+            per_label.extend(_union_overlapping(survivors, text))
 
-    winners = _resolve_label_conflicts(per_label)
+    winners: list[Candidate] = []
+    for cluster in _overlap_clusters(per_label):
+        winners.extend(_resolve_label_conflicts(cluster))
     return sorted((c.span for c in winners), key=lambda s: (s.start, s.end, s.label))

@@ -5,6 +5,7 @@ from fakes import ALL_LABELS, FakeBackend
 from pii_extract.api import create_app
 from pii_extract.config import Settings
 from pii_extract.pipeline import Pipeline
+from pii_extract.spans import Span
 
 TEXT = (
     "Contact Jane Doe at jane.doe@example.com or 555-867-5309. Card on file: 4111 1111 1111 1111."
@@ -167,3 +168,27 @@ def test_each_app_has_its_own_pipeline():
     with a, b:
         a.post("/extract", json={"text": TEXT})
     assert len(backend_a.calls) == 1 and backend_b.calls == []
+
+
+class DriftingBackend(FakeBackend):
+    """A model whose reported offsets are off by one."""
+
+    def predict(self, texts, labels, threshold):
+        results = super().predict(texts, labels, threshold)
+        return [
+            [
+                Span.model_construct(**{**s.model_dump(), "start": s.start + 1, "end": s.end + 1})
+                for s in spans
+            ]
+            for spans in results
+        ]
+
+
+def test_unverifiable_offsets_fail_the_request_instead_of_returning_wrong_spans():
+    pipeline = Pipeline(DriftingBackend(64), labels=ALL_LABELS)
+    with TestClient(create_app(settings=Settings(), pipeline=pipeline)) as test_client:
+        for path in ("/extract", "/redact"):
+            response = test_client.post(path, json={"text": TEXT})
+            assert response.status_code == 500
+            assert response.json() == {"detail": "span offset verification failed"}
+            assert "Jane" not in response.text

@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from pii_extract import __version__
@@ -111,10 +112,10 @@ def create_app(settings: Settings | None = None, pipeline: Pipeline | None = Non
             )
 
     @app.exception_handler(OffsetError)
-    def offset_error(request: Request, error: OffsetError):  # pragma: no cover - defensive
-        # Never answer with spans we could not verify against the input.
-        from fastapi.responses import JSONResponse
-
+    def offset_error(request: Request, error: OffsetError) -> JSONResponse:
+        # A backend produced offsets that do not match the input. Fail the
+        # request rather than answer with spans we could not verify: a caller
+        # redacting by those offsets would leave the PII in place.
         logger.error("offset verification failed: %s", error)
         return JSONResponse(status_code=500, content={"detail": "span offset verification failed"})
 

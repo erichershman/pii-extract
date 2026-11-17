@@ -162,3 +162,21 @@ def test_result_is_flat_sorted_and_independent_of_input_order():
         shuffled = candidates[:]
         rng.shuffle(shuffled)
         assert merge_spans(shuffled, TEXT) == result
+
+
+def test_large_inputs_stay_fast_because_only_neighbours_are_compared():
+    # 30,000 candidates: 10,000 entities, each seen by three overlapping
+    # windows. A quadratic merge would need ~10^9 comparisons here.
+    unit = "555-867-5309 "
+    text = unit * 10_000
+    candidates = [
+        Candidate(
+            Span(start=i * 13, end=i * 13 + 12, label=PHONE, score=score, text="555-867-5309")
+        )
+        for i in range(10_000)
+        for score in (0.7, 0.9, 0.8)
+    ]
+    result = merge_spans(candidates, text)
+    assert len(result) == 10_000
+    assert all(s.score == 0.9 for s in result)
+    assert [s.start for s in result[:3]] == [0, 13, 26]

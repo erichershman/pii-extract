@@ -43,8 +43,11 @@ _WRAPPING = " \t\r\n<>()[]\"'"
 _EMAIL = re.compile(
     r"[A-Za-z0-9._%+\-']+@(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}"
 )
-# Same separator (hyphen, space, or none) in both positions.
-_SSN = re.compile(r"\d{3}([- ]?)\d{2}\1\d{4}")
+# Nine digits, each optionally preceded by one space or hyphen: 000-12-3456,
+# 000 12 3456, 000123456, and the 3-3-3 grouping other countries use.
+_SSN_DIGITS = re.compile(r"\d(?:[- ]?\d){8}")
+# UK National Insurance shape: two letters, six digits, one letter (ZZ 12 34 56 T).
+_SSN_NATIONAL_INSURANCE = re.compile(r"[A-Za-z]{2}(?:[- ]?\d){6}[- ]?[A-Za-z]")
 _PHONE = re.compile(
     r"(?P<number>\+?[\d\s().\-/]+?)(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})?", re.IGNORECASE
 )
@@ -56,14 +59,25 @@ def is_email(value: str) -> bool:
 
 
 def is_ssn(value: str) -> bool:
-    """US SSN shape: nine digits grouped 3-2-4.
+    """A social-security-style number: nine digits in any grouping, or a UK
+    National Insurance number.
 
-    Shape only, on purpose. The SSA's allocation rules (no area 000, 666 or
-    9xx; no group 00) are not enforced, because synthetic fixtures use exactly
-    those reserved ranges to stay harmless, and because a 9xx number is an
-    ITIN, which is just as sensitive.
+    This runs only on spans the model already labelled as an SSN, so its job
+    is to reject things that cannot be one (words, record numbers with
+    prefixes, the wrong digit count), not to insist on one country's layout.
+    Dashed, spaced and undelimited forms all pass. The first version required
+    the US 3-2-4 grouping and rejected 68 of 162 real annotations on the
+    benchmark, all of them 3-3-3 groupings or National Insurance numbers.
+
+    The SSA's allocation rules (no area 000, 666 or 9xx; no group 00) are not
+    enforced either: synthetic fixtures use exactly those reserved ranges to
+    stay harmless, and a 9xx number is an ITIN, which is just as sensitive.
     """
-    return _SSN.fullmatch(value.strip(_TRAILING)) is not None
+    core = value.strip(_TRAILING)
+    return (
+        _SSN_DIGITS.fullmatch(core) is not None
+        or _SSN_NATIONAL_INSURANCE.fullmatch(core) is not None
+    )
 
 
 def is_phone(value: str) -> bool:
@@ -178,7 +192,17 @@ _ALIASES: dict[str, str] = {
 
 PII = SchemaPack(
     name="pii",
-    labels=("person", "email", "phone number", "credit card number", "ssn"),
+    # "medical record number" is here so the model has somewhere to put record
+    # identifiers. Without it they get labelled as the nearest type on offer:
+    # on the benchmark it raises ssn precision from 0.44 to 0.74.
+    labels=(
+        "person",
+        "email",
+        "phone number",
+        "credit card number",
+        "ssn",
+        "medical record number",
+    ),
     validators={
         "email": is_email,
         "phone number": is_phone,
@@ -190,7 +214,7 @@ PII = SchemaPack(
 
 PII_EXTENDED = SchemaPack(
     name="pii-extended",
-    labels=(*PII.labels, "date of birth", "ip address", "medical record number"),
+    labels=(*PII.labels, "date of birth", "ip address"),
     validators={**PII.validators, "ip address": is_ip_address},
     aliases=_ALIASES,
 )

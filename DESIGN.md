@@ -15,7 +15,7 @@ text ─► tokenize ─► plan windows ─► predict (batched) ─► shift o
 Each stage lives in one module and does one thing. `pipeline.py` is the only
 file that knows the order, and it is short. The stages
 with no model in them (windowing, merging, redaction, offsets) are pure
-functions over plain data, which is why 258 of the 279 tests run without torch.
+functions over plain data, which is why 266 of the 287 tests run without torch.
 
 ## 1. One canonical span schema
 
@@ -131,7 +131,7 @@ window up to a budget of total cost and never splits a token.
 **The budget is read from the model, not hardcoded:**
 `encoder.max_position_embeddings − label-prompt cost − fixed prompt overhead`.
 The label prompt shares the encoder's input with the text, so more labels
-leave less room: 480 tokens for GLiNER2-PII with the five default labels, 336
+leave less room: 480 tokens for GLiNER2-PII with five short labels, 336
 with forty. For `gliner` the result is also capped at `config.max_len`; since
 every word costs at least one subword, a subword budget of at most 384 can
 never exceed 384 words, so one number enforces both limits. The fixed overhead
@@ -397,8 +397,12 @@ across them; a test covers both.
 ## 7. Schema packs and validators
 
 **Decision.** A `SchemaPack` is a name, a label tuple, a map from label to
-validator, and an alias table. Two ship: `pii` (the five default labels) and
-`pii-extended` (adds date of birth, ip address, medical record number). The
+validator, and an alias table. Two ship: `pii` (person, email, phone number, credit card number, ssn,
+medical record number) and `pii-extended` (adds date of birth and ip address).
+"medical record number" has no validator; it is in the default set so the
+model has somewhere to put record identifiers instead of calling them SSNs
+(on the benchmark that alone lifts GLiNER2-PII's `ssn` precision from 0.44 to
+0.74). The
 pipeline takes its default labels from the pack, and explicit `labels`
 override them.
 
@@ -411,7 +415,7 @@ trailing comma, say), the type widens then.
 |---|---|---|
 | email | regex for one well-formed address | deliverability |
 | phone number | phone characters only, 7 to 15 digits (15 is the E.164 limit), optional extension | country-specific plans |
-| ssn | `\d{3}[- ]?\d{2}[- ]?\d{4}` with the same separator twice | SSA allocation rules: synthetic fixtures use the reserved ranges (000, 9xx) on purpose, and 9xx numbers are ITINs, which are just as sensitive |
+| ssn | nine digits in any grouping (dashed, spaced, undelimited), or the UK National Insurance shape | SSA allocation rules: synthetic fixtures use the reserved ranges (000, 9xx) on purpose, and 9xx numbers are ITINs, which are just as sensitive |
 | credit card number | 12 to 19 digits, spaces or hyphens allowed, Luhn checksum | issuer prefixes |
 | ip address | parses with the standard library | |
 
@@ -432,11 +436,16 @@ it. A test covers a card cut by a window boundary with validators on.
 **Off by default, and why.** A validator can only remove a detection. A value
 that fails its check is often still sensitive (one mistyped digit breaks
 Luhn), and real data does not follow one country's formats. The benchmark
-shows the size of the effect: with validators on, `ssn` precision for
-GLiNER2-PII rises from 0.44 to 0.96 and `ssn` recall falls from 0.92 to 0.53,
-because only 94 of 162 gold SSNs in the sample have the US shape. For a
-redactor a missed span is a leak and an extra span is over-redaction, so
-dropping detections has to be something the operator chooses.
+shows both halves of that. With validators on, GLiNER2-PII's overall recall
+falls from 0.929 to 0.910, nearly all of it on card numbers (0.86 to 0.56),
+because many of the dataset's synthetic cards fail Luhn. And the first `ssn`
+validator, which required the US 3-2-4 grouping, cut `ssn` recall from 0.92
+to 0.53: 68 of 162 gold SSNs were 3-3-3 groupings or National Insurance
+numbers. It was widened, and `ssn` recall with validators is now unchanged
+at 0.92 with precision at 0.97. The lesson generalizes: a validator runs on
+spans the model has already typed, so it should reject what cannot be that
+type, not enforce one layout. For a redactor a missed span is a leak and an
+extra span is over-redaction, so dropping detections has to be something the operator chooses.
 
 **Switches.** `validators` in settings is `off`, `on`/`all`, or a list of
 labels (`PII_VALIDATORS`, `--validators`), resolved against the pack at
@@ -523,7 +532,7 @@ Note the model card says "205M parameters" in prose while the weights file has
 
 | Layer | Count | Needs | What it covers |
 |---|---:|---|---|
-| `tests/unit` | 258 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
+| `tests/unit` | 266 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
 | `tests/model` | 21 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
 
 - **`FakeBackend`** is a regex "model" with a whitespace tokenizer and a
@@ -578,8 +587,9 @@ API uses, so latency includes tokenizing, windowing, and merging.
   comparable; predictions under the extra label are scored separately.
   Result: the extra label lifts GLiNER2-PII's `ssn` precision from 0.44 to
   0.74 and its overall F1 from 0.770 to 0.819 with recall at 0.92; validators
-  lift overall F1 to 0.800 but drop recall to 0.84. urchade is unchanged by
-  the label and loses F1 (0.823 to 0.785) with validators.
+  on their own (rerun after the `ssn` validator was widened; the ablation
+  file's validator rows predate that) lift GLiNER2-PII's overall F1 to 0.836
+  with recall at 0.91, and leave urchade's flat (0.823 to 0.821).
 
 Limits of the result: one dataset, one seed, 500 documents, one threshold,
 untuned prompts, and reconstructed gold. The dataset contains many identifier

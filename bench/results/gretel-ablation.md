@@ -1,3 +1,5 @@
+> Note: the "validators on" rows in this file were produced before the `ssn` validator was widened. See `gretel-validators.md` for current validator results.
+
 Dataset: `gretelai/gretel-pii-masking-en-v1` test split, 500 documents (seed 0; median 188 characters, max 843). Threshold 0.5. Hardware: NVIDIA GeForce RTX 5080 (CUDA 12.8, torch 2.11.0+cu128).
 
 `ssn` and the micro average over the base 7 labels (so every row is scored on the same gold spans), precision / recall / F1:

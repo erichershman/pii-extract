@@ -49,22 +49,37 @@ def test_email_rejects(value):
 
 
 @pytest.mark.parametrize(
-    "value", ["000-12-3456", "000 12 3456", "000123456", "900-12-3456", "000-12-3456."]
+    "value",
+    [
+        "000-12-3456",  # dashed
+        "000 12 3456",  # spaced
+        "000123456",  # undelimited
+        "900-12-3456",
+        "000-12-3456.",
+        "000 123 456",  # 3-3-3 grouping
+        "000-12 3456",  # mixed separators
+        "ZZ 12 34 56 T",  # UK National Insurance shapes
+        "ZZ 123456 T",
+        "ZZ123456T",
+    ],
 )
-def test_ssn_accepts_the_shape_including_reserved_ranges(value):
+def test_ssn_accepts_dashed_spaced_and_undelimited_forms(value):
     assert is_ssn(value)
 
 
 @pytest.mark.parametrize(
     "value",
     [
-        "000-12-345",
-        "000-123-456",
-        "000-12 3456",
-        "0000-12-3456",
-        "ZZ 12 34 56 T",
+        "000-12-345",  # eight digits
+        "0000-12-3456",  # ten digits
+        "000--12-3456",  # doubled separator
         "MRN-000123",
+        "MRN 000123456",
+        "Z 12 34 56 T",
+        "ZZ 12 34 56",
         "12345678",
+        "000.12.3456",
+        "not a number",
         "",
     ],
 )
@@ -155,7 +170,15 @@ def test_packs_and_aliases():
     assert get_pack("pii") is PII
     with pytest.raises(ValueError, match="unknown schema pack"):
         get_pack("nope")
-    assert PII.labels == ("person", "email", "phone number", "credit card number", "ssn")
+    assert PII.labels == (
+        "person",
+        "email",
+        "phone number",
+        "credit card number",
+        "ssn",
+        "medical record number",
+    )
+    assert PII_EXTENDED.labels == (*PII.labels, "date of birth", "ip address")
     assert PII.validator_for("social security number") is is_ssn
     assert PII.validator_for("card_number") is is_credit_card
     assert PII.validator_for("Phone Number") is is_phone

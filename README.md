@@ -37,7 +37,7 @@ The environment is pinned by `uv.lock`.
 
 ```bash
 just setup          # .venv with torch (CUDA 12.8 wheels), gliner2, gliner, dev tools
-just unit           # 258 pure-logic tests, no model needed (under a second)
+just unit           # 266 pure-logic tests, no model needed (under a second)
 just model-tests    # 21 tests on real weights (downloads ~1.5 GB on first run)
 ```
 
@@ -158,14 +158,14 @@ A schema pack is a label set plus optional per-label validators.
 
 | Pack | Labels | Validators |
 |---|---|---|
-| `pii` (default) | person, email, phone number, credit card number, ssn | email, phone number, credit card number, ssn |
-| `pii-extended` | the above plus date of birth, ip address, medical record number | the above plus ip address |
+| `pii` (default) | person, email, phone number, credit card number, ssn, medical record number | email, phone number, credit card number, ssn |
+| `pii-extended` | the above plus date of birth, ip address | the above plus ip address |
 
 | Validator | Passes when |
 |---|---|
 | email | the text is one well-formed address |
 | phone number | only phone characters, 7 to 15 digits, optional extension |
-| ssn | nine digits grouped 3-2-4 with consistent separators (US shape; allocation rules are not enforced) |
+| ssn | nine digits in any grouping, dashed, spaced or undelimited, or a UK National Insurance number (allocation rules are not enforced) |
 | credit card number | 12 to 19 digits, optionally grouped, passing the Luhn checksum |
 | ip address | a valid IPv4 or IPv6 address |
 
@@ -198,7 +198,7 @@ costs a little readability. So every default leans toward flagging more:
 | Default | Why |
 |---|---|
 | GLiNER2-PII as the model | Highest recall of the two (0.93 vs 0.88 below), at lower precision |
-| Validators off | A validator can only remove detections, and a malformed value is often still sensitive (a card number with one wrong digit fails Luhn). On the benchmark, validators cut `ssn` recall from 0.92 to 0.53 |
+| Validators off | A validator can only remove detections, and a malformed value is often still sensitive (a card number with one wrong digit fails Luhn). On the benchmark, validators cut `credit card number` recall from 0.86 to 0.56, because many of the dataset's synthetic card numbers do not pass Luhn |
 | Redaction covers the union | Where detections disagree on boundaries or labels, `/redact` replaces every flagged character |
 | Overlapping windows | An entity cut by one window is seen whole by the next |
 
@@ -249,20 +249,19 @@ maximum and varies between runs.
 
 ### Validators and an extra label
 
-`just bench --ablation` reruns the same 500 documents four ways. `ssn` and the
+The same 500 documents, rerun with validators on (`just bench --validators on`)
+and with an extra label (`just bench --ablation`). `ssn` and the
 micro average are scored on the same seven labels in every row, precision /
 recall / F1:
 
 | Model | Variant | ssn | Micro average (7 labels) |
 |---|---|---|---|
 | GLiNER2-PII | baseline | 0.442 / 0.919 / 0.597 | 0.657 / 0.929 / 0.770 |
-| GLiNER2-PII | validators on | 0.955 / 0.528 / 0.680 | 0.759 / 0.844 / 0.800 |
+| GLiNER2-PII | validators on | 0.974 / 0.919 / 0.946 | 0.773 / 0.910 / **0.836** |
 | GLiNER2-PII | + medical record number | 0.738 / 0.894 / 0.809 | 0.739 / 0.920 / **0.819** |
-| GLiNER2-PII | validators on + medical record number | 0.964 / 0.503 / 0.661 | 0.769 / 0.835 / 0.801 |
 | urchade | baseline | 0.959 / 0.876 / 0.916 | 0.774 / 0.878 / **0.823** |
-| urchade | validators on | 0.976 / 0.503 / 0.664 | 0.772 / 0.799 / 0.785 |
+| urchade | validators on | 0.986 / 0.876 / 0.928 | 0.785 / 0.861 / 0.821 |
 | urchade | + medical record number | 0.953 / 0.876 / 0.913 | 0.774 / 0.880 / 0.823 |
-| urchade | validators on + medical record number | 0.976 / 0.503 / 0.664 | 0.773 / 0.801 / 0.787 |
 
 - **Giving GLiNER2-PII the right label fixes most of its `ssn` problem without
   costing recall.** With "medical record number" offered, `ssn` precision goes
@@ -270,15 +269,26 @@ recall / F1:
   0.819, level with urchade's 0.823. The new label itself scores
   0.869 / 0.863 / 0.866 for GLiNER2-PII and 0.930 / 0.750 / 0.830 for urchade
   (284 gold spans). urchade is unchanged: it was not confusing the two.
-- **Validators buy precision with recall.** `ssn` precision reaches 0.96 for
-  GLiNER2-PII, but `ssn` recall falls from 0.92 to 0.53 for both models.
-  The cause is the data, not a bug: only 94 of the 162 `ssn` annotations in
-  the sample have the US 3-2-4 shape. The rest are nine digits in groups of
-  three or UK National Insurance style (`AA 99 99 99 A`), which a US-shape
-  check rejects. Overall F1 rises for GLiNER2-PII (0.770 to 0.800) because it
-  had many false positives to remove, and falls for urchade (0.823 to 0.785)
-  because it had few.
-- For redaction, the extra-label route is the better one: it is the only
+- **Validators now fix `ssn` without costing `ssn` recall.** With validators
+  on, GLiNER2-PII's `ssn` precision goes from 0.44 to 0.97 with recall
+  unchanged at 0.92, and its overall F1 from 0.770 to 0.836, the best result
+  in the table. urchade's `ssn` precision rises from 0.96 to 0.99 and its
+  overall F1 is flat (0.823 to 0.821).
+- **An earlier version of the `ssn` validator halved `ssn` recall** (0.92 to
+  0.53). It required the US 3-2-4 grouping, and 68 of the 162 `ssn`
+  annotations in the sample are other layouts: 29 are nine digits grouped
+  3-3-3 and 39 are UK National Insurance numbers (`ZZ 12 34 56 T`, with and
+  without spaces). The validator now accepts nine digits in any grouping,
+  dashed, spaced or undelimited, plus the National Insurance shape. It only
+  runs on spans already labelled as an SSN, so its job is to reject what
+  cannot be one.
+- **Validators still cost recall overall** (0.929 to 0.910 for GLiNER2-PII,
+  0.878 to 0.861 for urchade), almost all of it on `credit card number`,
+  whose recall falls from 0.86 to 0.56 for GLiNER2-PII: many of the dataset's
+  synthetic card numbers do not pass the Luhn check. They are still card
+  numbers a redactor should catch, which is why validators stay off by default.
+- For redaction, the extra-label route costs the least recall (0.929 to 0.920), so "medical record number" is now part of the default `pii` label set. The combination of the extra label and validators was not rerun after the validator fix.
+
   variant that raises precision while holding recall at 0.92.
 
 How to read this:

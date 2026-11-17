@@ -6,7 +6,7 @@ Background for every decision referenced here is in [DESIGN.md](DESIGN.md).
 
 State: the core pipeline, both backends, schema packs with validators, the
 API, CLI, container, CI workflow, and a benchmark with an ablation mode are
-working and tested (258 pure-logic tests, 21 model tests). The repository is
+working and tested (266 pure-logic tests, 21 model tests). The repository is
 on GitHub and the Actions workflow passes there.
 
 Done since the first version of this list: cross-label conflicts are
@@ -15,36 +15,52 @@ everything flagged, and schema packs with validators exist.
 
 ## 1. Detection quality for redaction
 
-**1a. Offer the models more identifier labels by default.**
-The ablation shows that adding "medical record number" raises GLiNER2-PII's
-`ssn` precision from 0.44 to 0.74 and overall F1 from 0.770 to 0.819 without
-costing recall. `pii-extended` already carries that label. Decide whether it
-should be the default pack, and test `customer id` and `employee id` the same
-way (`just bench --extra-labels "customer id" "employee id"`).
+**1a. Hybrid regex + NER for structured types.**
+`ssn`, `email`, `credit card number` and `phone number` have shapes a regex
+can find without a model. Run regex detectors alongside the model and union
+the two, so each covers the other's misses.
+- New module `src/pii_extract/detectors.py`: one finder per structured type
+  returning spans with offsets into the original text. The validators in
+  `src/pii_extract/schema.py` are the starting point (they check a span;
+  a finder searches for one), including the Luhn check to keep card matches
+  precise.
+- Feed regex matches into `merge_spans` as extra `Candidate`s rather than
+  appending them afterwards, so the existing rules decide how they combine
+  with model spans. On the redaction path the merge already unions everything
+  flagged. Decide the score regex candidates carry (1.0 makes them win label
+  conflicts) and make the feature a setting, off or on per label, like
+  validators.
+- Benchmark three ways on the same sample, per label and overall: **model
+  only**, **regex only**, and **union**. Add a `--detectors model|regex|union`
+  switch to `bench/run.py`; regex-only needs no backend. The number to watch
+  is recall on the structured labels. Today GLiNER2-PII's is 0.86 for card
+  numbers and 0.92 for phones and SSNs.
+- Expect regex-only precision to be poor for bare digit runs (any nine digits
+  look like an SSN), which is the argument for union over replacement, and
+  for requiring context or a checksum where one exists.
 
-**1b. Native label vocabularies.**
+**1b. More identifier labels.**
+"medical record number" is now in the default `pii` pack. Test `customer id`
+and `employee id` the same way
+(`just bench --extra-labels "customer id" "employee id"`), and rerun the
+extra-label and validator combination, which predates the `ssn` validator fix.
+
+**1c. Native label vocabularies.**
 GLiNER2-PII was trained on 42 specific labels (`phone_number`, `card_number`,
 `national_id_number`, ...; listed on its model card) and the pipeline sends
 free-text labels. Add `native_labels: dict[backend_name, dict[label, str]]` to
 `SchemaPack`, map on the way into `backend.predict` and back on the way out,
 and measure with `just bench`.
 
-**1c. Regex backstop.**
-Patterns that are cheap and near-certain (emails, Luhn-valid card numbers)
-can be injected as candidates with score 1.0 before the merge, so the merge
-rules decide how they combine with model output. Benchmark recall for
-`credit card number` is 0.86 for the default model. The validators in
-`src/pii_extract/schema.py` are the starting point.
-
 **1d. A "relabel" validation policy.**
 Today a span that fails validation is dropped. An alternative that keeps
 coverage: relabel it to a generic type instead. It needs a decision on the
 label name and on how placeholders render it.
 
-**1e. International formats.**
-The `ssn` validator is US-shape only, and 68 of 162 gold SSNs in the
-benchmark sample are other national formats. Either add per-country
-validators or rename the label so the scope is honest.
+**1e. Card numbers and Luhn.**
+With validators on, `credit card number` recall falls from 0.86 to 0.56 on
+the benchmark because many synthetic card numbers fail Luhn. Decide whether
+the card validator should be shape-only by default with Luhn as an opt-in.
 
 **1f. Tighten the "clipped" test.**
 A fragment that stops short of the window edge is not marked clipped
@@ -114,7 +130,7 @@ The current result is one dataset, one seed, 500 documents, one threshold.
    - `nvidia/gliner-PII` (NVIDIA Open Model License, **not** Apache). Fine to
      benchmark; read the terms before redistributing weights or shipping it
      as a default, and keep it out of the README's provenance line.
-2. **Native labels.** Rerun with each model's own label vocabulary (item 1b). The current table uses identical free-text
+2. **Native labels.** Rerun with each model's own label vocabulary (item 1c). The current table uses identical free-text
    prompts for both models, which likely understates GLiNER2-PII.
 3. **Threshold sweep.** `--threshold` exists; add a sweep that prints
    precision and recall per label at several thresholds, and choose defaults

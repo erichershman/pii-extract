@@ -141,7 +141,7 @@ def test_validators_are_resolved_against_the_schema_pack():
 
     extended = build_pipeline(Settings(device="cpu", schema_pack="pii-extended", validators="on"))
     assert "ip address" in extended.validators
-    assert extended.labels[-3:] == ("date of birth", "ip address", "medical record number")
+    assert extended.labels[-2:] == ("date of birth", "ip address")
 
 
 @pytest.mark.parametrize(

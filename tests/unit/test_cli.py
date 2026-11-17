@@ -193,3 +193,12 @@ def test_schema_pack_flag_sets_default_labels(cli):
 def test_unknown_validator_is_a_usage_error(cli):
     with pytest.raises(SystemExit, match="no validator"):
         cli("extract", "x", "--validators", "person")
+
+
+def test_redact_command_covers_the_union_while_extract_stays_tight(cli):
+    from test_pipeline_offsets import DisagreeingBackend
+
+    cli.factory = lambda settings: Pipeline(DisagreeingBackend(64), labels=["person"])
+    text = "Signed by Jane Doe Smith yesterday."
+    assert [e["text"] for e in json.loads(cli("extract", text))["entities"]] == ["Jane Doe"]
+    assert cli("redact", text, "--text-only") == "Signed by [PERSON_1] yesterday."

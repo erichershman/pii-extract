@@ -243,3 +243,16 @@ def test_redact_with_validation_leaves_the_rejected_value_in_place():
         strict = test_client.post("/redact", json={"text": BAD_CARD_TEXT, "validate": True})
         assert "4111 1111 1111 1112" in strict.json()["redacted_text"]
         assert "4111 1111 1111 1111" not in strict.json()["redacted_text"]
+
+
+def test_extract_and_redact_merge_differently_on_purpose():
+    from test_pipeline_offsets import DisagreeingBackend
+
+    text = "Signed by Jane Doe Smith yesterday."
+    pipeline = Pipeline(DisagreeingBackend(64), labels=["person"])
+    with TestClient(create_app(settings=Settings(), pipeline=pipeline)) as test_client:
+        extracted = test_client.post("/extract", json={"text": text}).json()["entities"]
+        assert [e["text"] for e in extracted] == ["Jane Doe"]
+        redacted = test_client.post("/redact", json={"text": text}).json()
+        assert redacted["redacted_text"] == "Signed by [PERSON_1] yesterday."
+        assert redacted["replacements"][0]["span"]["text"] == "Jane Doe Smith"

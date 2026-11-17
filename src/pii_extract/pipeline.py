@@ -20,6 +20,11 @@ DEFAULT_LABELS: tuple[str, ...] = PII.labels
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_OVERLAP_TOKENS = 64
 
+# Redaction merges with this IoU threshold regardless of configuration. At 1.0
+# only exact duplicates are collapsed and every other overlap is unioned, so
+# the merged spans cover every character any window flagged.
+COVERAGE_IOU_THRESHOLD = 1.0
+
 
 def _touches_cut_edge(span: Span, window: Window) -> bool:
     """True if a window-relative span reaches an edge where the document continues."""
@@ -94,9 +99,22 @@ class Pipeline:
     ) -> list[Span]:
         """Return non-overlapping spans, sorted by position, in original offsets.
 
-        ``validate`` switches the schema pack's validators for this call:
-        ``True`` runs all of them, ``False`` none, ``None`` the configured set.
+        Near-duplicate detections keep the best one's boundaries (the
+        configured ``iou_threshold``), so spans are as tight as the model's
+        best guess. ``validate`` switches the schema pack's validators for
+        this call: ``True`` runs all of them, ``False`` none, ``None`` the
+        configured set.
         """
+        return self._detect(text, labels, threshold, validate, self.iou_threshold)
+
+    def _detect(
+        self,
+        text: str,
+        labels: Sequence[str] | None,
+        threshold: float | None,
+        validate: bool | None,
+        iou_threshold: float,
+    ) -> list[Span]:
         chosen = self._labels(labels)
         cutoff = self.threshold if threshold is None else threshold
         if not 0.0 <= cutoff <= 1.0:
@@ -114,7 +132,7 @@ class Pipeline:
             for window, spans in zip(windows, per_window, strict=True)
             for span in spans
         ]
-        merged = merge_spans(candidates, text, self.iou_threshold)
+        merged = merge_spans(candidates, text, iou_threshold)
         verify_spans(text, merged)
 
         enabled = self._enabled_validators(validate)
@@ -135,4 +153,11 @@ class Pipeline:
         threshold: float | None = None,
         validate: bool | None = None,
     ) -> RedactionResult:
-        return redact(text, self.extract(text, labels, threshold, validate), strategy)
+        """Detect and replace, covering the union of everything flagged.
+
+        Unlike ``extract``, redaction never trims a detection to a tighter
+        duplicate: if any window flagged a character, it is replaced. The
+        spans reported here can therefore be wider than ``extract``'s.
+        """
+        spans = self._detect(text, labels, threshold, validate, COVERAGE_IOU_THRESHOLD)
+        return redact(text, spans, strategy)

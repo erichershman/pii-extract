@@ -247,15 +247,44 @@ than what the model reported under that label. Extraction consumers get a
 span that says "person" over characters another candidate called
 "organization". For a redactor that is the right way to be wrong.
 
-**What can still be discarded, and the knob for it.** Rules 2 and 3 never drop
-a flagged character. Rule 1 does, deliberately: when two detections of one
-entity nearly coincide, the weaker one's extra characters are treated as
-boundary noise. `iou_threshold` controls this. At `1.0` only exact duplicates
-count as duplicates, everything else is unioned, and the output covers every
-character any candidate flagged; the randomized merge test asserts exactly
-that property. The default stays at 0.5, which keeps spans tight when windows
-agree. Setting it to 1.0 is the strict-coverage mode for redaction-only
-deployments.
+### Extraction and redaction merge differently
+
+Rules 2 and 3 never drop a flagged character. Rule 1 does, deliberately: when
+two same-label detections nearly coincide, it keeps the better one's
+boundaries and treats the weaker one's extra characters as noise. Whether
+that is right depends on what the spans are for, so the two entry points use
+the same merge code with different thresholds:
+
+| | `extract` (`/extract`, `pii-extract extract`) | `redact` (`/redact`, `pii-extract redact`) |
+|---|---|---|
+| Goal | The best estimate of each entity | Nothing flagged survives |
+| IoU threshold | configured `iou_threshold`, default 0.5 | fixed at 1.0 (`COVERAGE_IOU_THRESHOLD`) |
+| Near-duplicates, same label | best detection's boundaries | union |
+| `Jane Doe` 0.95 + `Jane Doe Smith` 0.60 | `Jane Doe` | `Jane Doe Smith` |
+| Guarantee | flat, tight spans | flat spans covering **every** character any window flagged |
+
+At threshold 1.0 only exact duplicates count as duplicates; everything else
+overlapping is unioned (same label) or absorbed (different labels). So the
+redaction path has a property that is easy to state and to test: the set of
+replaced characters equals the set of characters flagged by any window.
+Three tests assert it (a randomized merge test, a randomized pipeline test
+over real windows, and API and CLI tests showing the two paths disagree on the
+same input).
+
+Consequences worth knowing:
+
+- The spans in a `/redact` response can be wider than the spans `/extract`
+  returns for the same text. That is intended; they answer different questions.
+- `iou_threshold` configures extraction only. Redaction ignores it, so no
+  setting can make redaction leak.
+- The wider span keeps the best candidate's label and the highest score.
+- Validators, when switched on, run after the merge on either path. On the
+  redaction path that means a union span is what gets validated.
+
+**Alternative considered:** one merge for both with `iou_threshold` defaulting
+to 1.0. Simpler, but it would make every extraction span absorb its sloppiest
+duplicate (trailing commas, neighbouring words), costing exact-match accuracy
+for callers who want entities, not coverage.
 
 **Residual risk.** A fragment that does not reach the window edge is not
 marked clipped. A model that reports only the first two groups of a card

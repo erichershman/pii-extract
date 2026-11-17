@@ -47,7 +47,8 @@ two detections of one entity nearly coincide, the weaker one's extra
 characters (a trailing comma, a neighbouring word) are treated as boundary
 noise. ``iou_threshold`` sets how much agreement counts as "the same entity".
 At 1.0 only exact duplicates qualify, everything else is unioned, and the
-output covers every character any candidate flagged.
+output covers every character any candidate flagged. The pipeline uses the
+configured threshold for extraction and 1.0 for redaction.
 
 Cost
 ----

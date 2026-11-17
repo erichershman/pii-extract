@@ -9,6 +9,7 @@ import random
 import pytest
 
 from fakes import ALL_LABELS, CARD, EMAIL, FULL_CARD, PERSON, PHONE, FakeBackend
+from pii_extract.backends.base import checked_span
 from pii_extract.pipeline import Pipeline
 from pii_extract.redaction import PlaceholderStrategy
 from pii_extract.spans import verify_spans
@@ -246,3 +247,70 @@ def test_validators_run_after_the_merge_and_can_be_switched_per_call():
     assert cut.extract(text, validate=True) == []
     assert found(on.extract(text, validate=False)) == found(on.extract(text))
     verify_spans(text, on.extract(text))
+
+
+class DisagreeingBackend(FakeBackend):
+    """Reports one name twice with different boundaries, as two windows might."""
+
+    def predict(self, texts, labels, threshold):
+        self.calls.append(list(texts))
+        out = []
+        for text in texts:
+            spans = []
+            if "Jane Doe Smith" in text:
+                at = text.index("Jane Doe Smith")
+                spans = [
+                    checked_span(text, at, at + 8, PERSON, 0.95, "Jane Doe"),
+                    checked_span(text, at, at + 14, PERSON, 0.60, "Jane Doe Smith"),
+                ]
+            out.append(spans)
+        return out
+
+
+def test_extract_keeps_the_best_boundaries_but_redact_covers_the_union():
+    text = "Signed by Jane Doe Smith yesterday."
+    pipe = Pipeline(DisagreeingBackend(64), labels=[PERSON])
+
+    # IoU 8/14 = 0.57 >= 0.5: duplicates, so extract trusts the confident span.
+    assert [(s.text, s.score) for s in pipe.extract(text)] == [("Jane Doe", 0.95)]
+
+    # Redaction must not leave "Smith" behind just because a tighter span scored higher.
+    result = pipe.redact(text, PlaceholderStrategy())
+    assert result.text == "Signed by [PERSON_1] yesterday."
+    (item,) = result.replacements
+    assert item.span.text == "Jane Doe Smith" and item.span.score == 0.95
+    verify_spans(text, [item.span])
+
+
+def test_redact_coverage_does_not_depend_on_the_configured_iou_threshold():
+    text = "Signed by Jane Doe Smith yesterday."
+    for iou_threshold in (0.1, 0.5, 1.0):
+        pipe = Pipeline(DisagreeingBackend(64), labels=[PERSON], iou_threshold=iou_threshold)
+        assert "Smith" not in pipe.redact(text, PlaceholderStrategy()).text
+
+
+def test_redaction_covers_every_character_any_window_flagged():
+    # Real windows this time: random documents, small windows, and a check
+    # that nothing a window reported survives in the redacted text's gaps.
+    rng = random.Random(99)
+    for _ in range(60):
+        words = []
+        for i in range(rng.randint(20, 80)):
+            words.append(
+                rng.choice(["lorem", "ipsum", FULL_CARD, "Jane Doe", f"555-{100 + i}-{1000 + i}"])
+            )
+        text = " ".join(words)
+        pipe = pipeline(budget=rng.randint(6, 14), overlap=rng.randint(0, 3))
+        windows = pipe.plan(text)
+        flagged = set()
+        for window, spans in zip(
+            windows,
+            pipe.backend.predict([w.slice(text) for w in windows], ALL_LABELS, 0.5),
+            strict=True,
+        ):
+            for s in spans:
+                flagged.update(range(window.start + s.start, window.start + s.end))
+
+        result = pipe.redact(text, PlaceholderStrategy())
+        covered = {i for r in result.replacements for i in range(r.span.start, r.span.end)}
+        assert covered == flagged

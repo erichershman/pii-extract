@@ -1,0 +1,33 @@
+services:
+  pii-extract:
+    build: .
+    image: pii-extract:latest
+    ports:
+      - "${PII_PORT:-8000}:8000"
+    environment:
+      GLINER_MODEL: ${GLINER_MODEL:-fastino/gliner2-pii-v1}
+      PII_BACKEND: ${PII_BACKEND:-gliner2}
+      PII_DEVICE: ${PII_DEVICE:-auto}
+      PII_PRELOAD: "1"
+      # Set this to a secret to make `hash` redactions stable across requests.
+      PII_HASH_SALT: ${PII_HASH_SALT:-}
+    volumes:
+      # Model cache: weights are downloaded once and reused across restarts.
+      - hf-cache:/cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

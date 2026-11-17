@@ -10,9 +10,11 @@ from pii_extract.backends.budget import label_prompt_cost, subword_costs
 from pii_extract.chunking import Token
 from pii_extract.spans import Span
 
-# GLiNER2-PII. The model card and the project spec call it
-# "fastino/gliner2-pii-v1"; this is the repository it is actually published under.
+# GLiNER2-PII. Its model card and this project's spec call it
+# "fastino/gliner2-pii-v1", but no repository exists under that name; the
+# weights are published as the id below. The alias keeps the spec's name usable.
 DEFAULT_GLINER2_MODEL = "fastino/gliner2-privacy-filter-PII-multi"
+MODEL_ALIASES = {"fastino/gliner2-pii-v1": DEFAULT_GLINER2_MODEL}
 
 # Subword tokens the schema prompt spends besides the labels themselves
 # ([CLS], [SEP], the "( [P] entities ( ... ) )" scaffolding, the text separator).
@@ -25,7 +27,7 @@ class Gliner2Backend:
     def __init__(
         self, model_id: str = DEFAULT_GLINER2_MODEL, device: str = "auto", batch_size: int = 8
     ) -> None:
-        self.model_id = model_id
+        self.model_id = MODEL_ALIASES.get(model_id, model_id)
         self._batch_size = batch_size
         self._session: ModelSession[Any] = ModelSession(self._load_model, device)
 

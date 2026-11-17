@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
 
 from pii_extract.pipeline import Pipeline
@@ -104,7 +105,7 @@ def test_long_document_is_windowed_and_every_entity_is_found_once(backend):
     # addresses as a person in some contexts. That is model quality, which the
     # benchmark measures; this test is about windowing.)
     assert len({s.key for s in spans}) == len(spans)
-    for left, right in zip(spans, spans[1:], strict=False):
+    for left, right in itertools.pairwise(spans):
         assert left.end <= right.start
 
 

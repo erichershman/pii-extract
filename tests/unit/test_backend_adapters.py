@@ -2,7 +2,7 @@
 
 import pytest
 
-from pii_extract.backends import GlinerBackend, Gliner2Backend
+from pii_extract.backends import Gliner2Backend, GlinerBackend
 from pii_extract.backends.base import ModelSession
 from pii_extract.spans import OffsetError
 

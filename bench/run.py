@@ -2,6 +2,7 @@
 
     just bench                      # 500 documents, both backends
     just bench --limit 100 --backends gliner2
+    just bench --concat 25          # join 25 documents into one to force windowing
 
 Prints a Markdown report and writes it (plus raw JSON) to bench/results/.
 Every document goes through ``Pipeline.extract``, the same code path the API
@@ -19,24 +20,59 @@ import time
 from pathlib import Path
 
 from bench.gretel import DATASET_ID, LABELS, PROMPT_TO_LABEL, gold_spans, parse_entities
-from bench.metrics import Counts, micro_average, percentile, score_exact, score_overlap
+from bench.metrics import (
+    Counts,
+    GoldSpan,
+    micro_average,
+    percentile,
+    score_exact,
+    score_overlap,
+)
 from pii_extract.backends import BACKENDS, create_backend
 from pii_extract.pipeline import Pipeline
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
 
-def load_sample(limit: int, seed: int) -> list[tuple[str, list]]:
+Document = tuple[str, list[GoldSpan], int]  # text, gold spans, unlocated annotations
+
+SEPARATOR = "\n\n"
+
+
+def load_sample(limit: int, seed: int, concat: int = 1) -> list[Document]:
+    """A seeded sample of the test split, with gold spans located in each text.
+
+    With ``concat > 1``, consecutive documents are joined into one long text
+    (gold offsets shifted to match). The dataset's documents all fit in a
+    single window, so this is what makes the windowing and dedup stages do
+    work; the entities and their gold labels are unchanged.
+    """
     from datasets import load_dataset
 
     rows = load_dataset(DATASET_ID, split="test")
     order = list(range(len(rows)))
     random.Random(seed).shuffle(order)
-    sample = []
+    documents: list[Document] = []
     for index in order[:limit]:
         row = rows[index]
-        sample.append((row["text"], parse_entities(row["entities"])))
-    return sample
+        gold, missing = gold_spans(row["text"], parse_entities(row["entities"]))
+        documents.append((row["text"], gold, missing))
+    if concat <= 1:
+        return documents
+
+    joined: list[Document] = []
+    for first in range(0, len(documents), concat):
+        parts: list[str] = []
+        gold_all: list[GoldSpan] = []
+        missing_all = 0
+        offset = 0
+        for text, gold, missing in documents[first : first + concat]:
+            gold_all.extend((start + offset, end + offset, label) for start, end, label in gold)
+            missing_all += missing
+            parts.append(text)
+            offset += len(text) + len(SEPARATOR)
+        joined.append((SEPARATOR.join(parts), gold_all, missing_all))
+    return joined
 
 
 def hardware() -> str:
@@ -48,7 +84,7 @@ def hardware() -> str:
     return f"CPU: {platform.processor() or platform.machine()} (torch {torch.__version__})"
 
 
-def evaluate(backend_name: str, sample: list, threshold: float, device: str) -> dict:
+def evaluate(backend_name: str, sample: list[Document], threshold: float, device: str) -> dict:
     import torch
 
     backend = create_backend(backend_name, device=device)
@@ -58,7 +94,7 @@ def evaluate(backend_name: str, sample: list, threshold: float, device: str) -> 
     started = time.perf_counter()
     backend.load()
     load_seconds = time.perf_counter() - started
-    for text, _ in sample[:5]:  # warm-up: CUDA kernels, tokenizer caches
+    for text, _, _ in sample[:5]:  # warm-up: CUDA kernels, tokenizer caches
         pipeline.extract(text)
 
     exact: dict[str, Counts] = {label: Counts() for label in LABELS}
@@ -66,8 +102,7 @@ def evaluate(backend_name: str, sample: list, threshold: float, device: str) -> 
     latencies_ms: list[float] = []
     windows = 0
     unlocated = 0
-    for text, entities in sample:
-        gold, missing = gold_spans(text, entities)
+    for text, gold, missing in sample:
         unlocated += missing
         windows += len(pipeline.plan(text))
 
@@ -112,9 +147,14 @@ def _prf(counts: Counts) -> str:
 
 
 def render(results: list[dict], args: argparse.Namespace, sample: list, hw: str) -> str:
-    chars = [len(text) for text, _ in sample]
+    chars = [len(text) for text, _, _ in sample]
+    shape = (
+        f"{len(sample)} documents"
+        if args.concat <= 1
+        else f"{args.limit} documents joined {args.concat} at a time into {len(sample)} long texts"
+    )
     lines = [
-        f"Dataset: `{DATASET_ID}` test split, {len(sample)} documents "
+        f"Dataset: `{DATASET_ID}` test split, {shape} "
         f"(seed {args.seed}; median {int(statistics.median(chars))} characters, "
         f"max {max(chars)}). Threshold {args.threshold}. Hardware: {hw}.",
         "",
@@ -139,9 +179,9 @@ def render(results: list[dict], args: argparse.Namespace, sample: list, hw: str)
     )
     lines += [
         "",
-        "Latency per document through `Pipeline.extract` (one request at a time, after warm-up):",
+        "Latency per text through `Pipeline.extract` (one request at a time, after warm-up):",
         "",
-        "| Model | Device | Mean | p50 | p95 | Max | Windows/doc |",
+        "| Model | Device | Mean | p50 | p95 | Max | Windows/text |",
         "|---|---|---:|---:|---:|---:|---:|",
     ]
     for r in results:
@@ -161,10 +201,13 @@ def main() -> None:
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--backends", nargs="+", default=list(BACKENDS), choices=list(BACKENDS))
+    parser.add_argument(
+        "--concat", type=int, default=1, help="join this many documents per text (forces windows)"
+    )
     parser.add_argument("--no-save", action="store_true", help="print only")
     args = parser.parse_args()
 
-    sample = load_sample(args.limit, args.seed)
+    sample = load_sample(args.limit, args.seed, args.concat)
     hw = hardware()
     results = [evaluate(name, sample, args.threshold, args.device) for name in args.backends]
     report = render(results, args, sample, hw)
@@ -172,8 +215,9 @@ def main() -> None:
 
     if not args.no_save:
         RESULTS_DIR.mkdir(exist_ok=True)
-        (RESULTS_DIR / "gretel.md").write_text(report, encoding="utf-8")
-        (RESULTS_DIR / "gretel.json").write_text(
+        stem = "gretel" if args.concat <= 1 else f"gretel-concat{args.concat}"
+        (RESULTS_DIR / f"{stem}.md").write_text(report, encoding="utf-8")
+        (RESULTS_DIR / f"{stem}.json").write_text(
             json.dumps(
                 {"dataset": DATASET_ID, "args": vars(args), "hardware": hw, "results": results},
                 indent=2,

@@ -1,0 +1,196 @@
+{
+  "dataset": "gretelai/gretel-pii-masking-en-v1",
+  "args": {
+    "limit": 500,
+    "seed": 0,
+    "threshold": 0.5,
+    "device": "auto",
+    "backends": [
+      "gliner2",
+      "gliner"
+    ],
+    "concat": 1,
+    "no_save": false
+  },
+  "hardware": "NVIDIA GeForce RTX 5080 (CUDA 12.8, torch 2.11.0+cu128)",
+  "results": [
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "load_seconds": 4.73,
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 12.82,
+        "p50": 12.46,
+        "p95": 15.29,
+        "max": 19.14
+      },
+      "exact": {
+        "person": {
+          "tp": 212,
+          "fp": 135,
+          "fn": 18
+        },
+        "email": {
+          "tp": 96,
+          "fp": 7,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 13,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 148,
+          "fp": 187,
+          "fn": 13
+        },
+        "credit card number": {
+          "tp": 55,
+          "fp": 16,
+          "fn": 9
+        },
+        "date of birth": {
+          "tp": 228,
+          "fp": 96,
+          "fn": 12
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 14,
+          "fn": 9
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 225,
+          "fp": 122,
+          "fn": 5
+        },
+        "email": {
+          "tp": 97,
+          "fp": 6,
+          "fn": 0
+        },
+        "phone number": {
+          "tp": 72,
+          "fp": 10,
+          "fn": 3
+        },
+        "ssn": {
+          "tp": 150,
+          "fp": 185,
+          "fn": 11
+        },
+        "credit card number": {
+          "tp": 57,
+          "fp": 14,
+          "fn": 7
+        },
+        "date of birth": {
+          "tp": 229,
+          "fp": 95,
+          "fn": 11
+        },
+        "ip address": {
+          "tp": 89,
+          "fp": 13,
+          "fn": 8
+        }
+      }
+    },
+    {
+      "backend": "gliner",
+      "model": "urchade/gliner_multi_pii-v1",
+      "device": "cuda",
+      "load_seconds": 3.78,
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 15.47,
+        "p50": 15.07,
+        "p95": 19.48,
+        "max": 26.72
+      },
+      "exact": {
+        "person": {
+          "tp": 217,
+          "fp": 172,
+          "fn": 13
+        },
+        "email": {
+          "tp": 94,
+          "fp": 9,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 67,
+          "fp": 6,
+          "fn": 8
+        },
+        "ssn": {
+          "tp": 141,
+          "fp": 6,
+          "fn": 20
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 209,
+          "fp": 41,
+          "fn": 31
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 6,
+          "fn": 32
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 222,
+          "fp": 167,
+          "fn": 8
+        },
+        "email": {
+          "tp": 95,
+          "fp": 8,
+          "fn": 2
+        },
+        "phone number": {
+          "tp": 68,
+          "fp": 5,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 144,
+          "fp": 3,
+          "fn": 15
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 212,
+          "fp": 38,
+          "fn": 26
+        },
+        "ip address": {
+          "tp": 67,
+          "fp": 4,
+          "fn": 30
+        }
+      }
+    }
+  ]
+}

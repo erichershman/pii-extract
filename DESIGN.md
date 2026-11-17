@@ -15,7 +15,7 @@ text ─► tokenize ─► plan windows ─► predict (batched) ─► shift o
 Each stage lives in one module and does one thing. `pipeline.py` is the only
 file that knows the order, and it is short. The stages
 with no model in them (windowing, merging, redaction, offsets) are pure
-functions over plain data, which is why 266 of the 287 tests run without torch.
+functions over plain data, which is why 266 of the 293 tests run without torch.
 
 ## 1. One canonical span schema
 
@@ -533,7 +533,7 @@ Note the model card says "205M parameters" in prose while the weights file has
 | Layer | Count | Needs | What it covers |
 |---|---:|---|---|
 | `tests/unit` | 266 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
-| `tests/model` | 21 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
+| `tests/model` | 27 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
 
 - **`FakeBackend`** is a regex "model" with a whitespace tokenizer and a
   configurable budget. It runs the real tokenize → window → shift → merge
@@ -552,6 +552,36 @@ Note the model card says "205M parameters" in prose while the weights file has
   of `agent10@example.com` as a person in some contexts; that is model
   quality, so the long-document test asserts emails for the default model only
   and phones for both.
+
+## 12. ONNX export and parity (urchade backend)
+
+`scripts/export_onnx.py` (`just export-onnx`) calls gliner's own
+`export_to_onnx` (fp32, opset 19, no quantization) and writes a
+self-contained directory under `models/`: config, tokenizer and a 1.16 GB
+`model.onnx`. `models/` and `*.onnx` are gitignored; nothing exported is
+committed. Only the urchade model is exported: `gliner2` 2.1.0 has no export
+path.
+
+`tests/model/test_onnx_parity.py` (`just onnx-parity`) loads that directory
+with `load_onnx_model=True` and runs it through the same `GlinerBackend`
+adapter and `Pipeline` as the PyTorch model, so the comparison is made after
+span decoding, windowing and merging. It skips when the export or
+`onnxruntime` is missing.
+
+| Check | Result |
+|---|---|
+| Tolerance | labels and start/end offsets identical; scores within 1e-3 |
+| Tokenization and window budget | identical |
+| Four short fixtures (including BOM, NBSP, CRLF, a text with no PII) | identical spans |
+| Windowed long input: 8 windows, 137 window-level spans, 120 merged spans | identical spans, before and after merging |
+| Span mismatches | 0 |
+| Max score delta | 1.04e-04 |
+
+What was compared: PyTorch on CUDA against ONNX Runtime 1.32 on its CPU
+execution provider (the `onnx` extra installs the CPU build). The score
+differences are therefore both runtime and device effects. Not yet measured:
+ONNX Runtime latency, the CUDA execution provider, and fp16 or int8 graphs.
+The ONNX model is not yet a selectable backend; the test wires it in by hand.
 
 ## Benchmark methodology
 
@@ -591,6 +621,13 @@ API uses, so latency includes tokenizing, windowing, and merging.
   file's validator rows predate that) lift GLiNER2-PII's overall F1 to 0.836
   with recall at 0.91, and leave urchade's flat (0.823 to 0.821).
 
+- **Held-out sample.** `--offset 500` skips the first 500 documents of the
+  shuffled split. The `ssn` validator was widened after inspecting its
+  rejections on documents 0-499, so validator figures on those are tuned;
+  the headline validator figures come from documents 500-999. There,
+  GLiNER2-PII's `ssn` goes from 0.482 / 0.849 / 0.615 to 0.969 / 0.849 / 0.905
+  and the micro average from 0.677 / 0.915 / 0.778 to 0.777 / 0.892 / 0.831.
+
 Limits of the result: one dataset, one seed, 500 documents, one threshold,
 untuned prompts, and reconstructed gold. The dataset contains many identifier
 types outside the seven scored labels, which counts against a model that tags
@@ -606,4 +643,4 @@ a general ranking.
 | App in `src/main.py` | `src/main.py` is a shim over `pii_extract/api.py` | So the API ships in the installed package (section 8) |
 | "Existing scaffold" carries over | Scaffold created from scratch to the spec's description | The repository held only the spec and `.gitignore` |
 | Schema packs, validators, Luhn | Built (section 7); validators are off by default | A validator can only remove detections, which is the wrong default for a redactor |
-| ONNX export | Not built | Explicitly out of scope for this session |
+| ONNX export | Export script and parity test for the urchade model (section 12); no ONNX backend yet | GLiNER2 has no export path in `gliner2` 2.1.0 |

@@ -1,0 +1,112 @@
+{
+  "dataset": "gretelai/gretel-pii-masking-en-v1",
+  "args": {
+    "limit": 500,
+    "seed": 0,
+    "offset": 500,
+    "threshold": 0.5,
+    "device": "auto",
+    "backends": [
+      "gliner2"
+    ],
+    "concat": 1,
+    "validators": "off",
+    "extra_labels": [],
+    "ablation": false,
+    "no_save": false
+  },
+  "hardware": "NVIDIA GeForce RTX 5080 (CUDA 12.8, torch 2.11.0+cu128)",
+  "results": [
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "variant": "baseline",
+      "validators": false,
+      "extra_labels": [],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 0,
+      "latency_ms": {
+        "mean": 13.63,
+        "p50": 13.36,
+        "p95": 16.75,
+        "max": 21.46
+      },
+      "exact": {
+        "person": {
+          "tp": 205,
+          "fp": 136,
+          "fn": 30
+        },
+        "email": {
+          "tp": 113,
+          "fp": 5,
+          "fn": 0
+        },
+        "phone number": {
+          "tp": 95,
+          "fp": 13,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 124,
+          "fp": 133,
+          "fn": 22
+        },
+        "credit card number": {
+          "tp": 58,
+          "fp": 37,
+          "fn": 5
+        },
+        "date of birth": {
+          "tp": 214,
+          "fp": 96,
+          "fn": 12
+        },
+        "ip address": {
+          "tp": 100,
+          "fp": 14,
+          "fn": 9
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 223,
+          "fp": 118,
+          "fn": 12
+        },
+        "email": {
+          "tp": 113,
+          "fp": 5,
+          "fn": 0
+        },
+        "phone number": {
+          "tp": 97,
+          "fp": 11,
+          "fn": 4
+        },
+        "ssn": {
+          "tp": 131,
+          "fp": 126,
+          "fn": 15
+        },
+        "credit card number": {
+          "tp": 58,
+          "fp": 37,
+          "fn": 5
+        },
+        "date of birth": {
+          "tp": 214,
+          "fp": 96,
+          "fn": 12
+        },
+        "ip address": {
+          "tp": 100,
+          "fp": 14,
+          "fn": 9
+        }
+      }
+    }
+  ]
+}

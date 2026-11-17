@@ -22,6 +22,12 @@ models = [
     # tokenizer needs protobuf; neither package declares it.
     "protobuf>=5",
 ]
+# ONNX export and ONNX Runtime inference for the gliner backend.
+onnx = [
+    "onnx>=1.17",
+    "onnxruntime>=1.20",
+    "onnxscript>=0.2",
+]
 bench = [
     "datasets>=3.0",
 ]

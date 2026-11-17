@@ -78,7 +78,7 @@ ABLATION = (
 )
 
 
-def load_sample(limit: int, seed: int, concat: int = 1) -> list[RawDocument]:
+def load_sample(limit: int, seed: int, concat: int = 1, offset: int = 0) -> list[RawDocument]:
     """A seeded sample of the test split.
 
     With ``concat > 1``, consecutive documents are joined into one long text
@@ -90,7 +90,10 @@ def load_sample(limit: int, seed: int, concat: int = 1) -> list[RawDocument]:
     rows = load_dataset(DATASET_ID, split="test")
     order = list(range(len(rows)))
     random.Random(seed).shuffle(order)
-    documents = [(rows[i]["text"], parse_entities(rows[i]["entities"])) for i in order[:limit]]
+    documents = [
+        (rows[i]["text"], parse_entities(rows[i]["entities"]))
+        for i in order[offset : offset + limit]
+    ]
     step = max(concat, 1)
     sample: list[RawDocument] = []
     for first in range(0, len(documents), step):
@@ -196,7 +199,8 @@ def describe(args: argparse.Namespace, sample: list[RawDocument], hw: str) -> st
     )
     return (
         f"Dataset: `{DATASET_ID}` test split, {shape} "
-        f"(seed {args.seed}; median {int(statistics.median(chars))} characters, "
+        f"(seed {args.seed}, offset {args.offset}; "
+        f"median {int(statistics.median(chars))} characters, "
         f"max {max(chars)}). Threshold {args.threshold}. Hardware: {hw}."
     )
 
@@ -268,6 +272,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--limit", type=int, default=500, help="documents to evaluate")
     parser.add_argument("--seed", type=int, default=0, help="sampling seed")
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many documents of the shuffled split first; --offset 500 gives a "
+        "sample disjoint from the default one (use it as a held-out set)",
+    )
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--backends", nargs="+", default=list(BACKENDS), choices=list(BACKENDS))
@@ -303,7 +314,7 @@ def main() -> None:
             Variant(validators=args.validators == "on", extra_labels=tuple(args.extra_labels)),
         )
 
-    sample = load_sample(args.limit, args.seed, args.concat)
+    sample = load_sample(args.limit, args.seed, args.concat, args.offset)
     hw = hardware()
     results: list[dict] = []
     for name in args.backends:  # load each model once, run every variant on it
@@ -326,6 +337,8 @@ def main() -> None:
     if not args.no_save:
         RESULTS_DIR.mkdir(exist_ok=True)
         parts = ["gretel"]
+        if args.offset:
+            parts.append(f"heldout{args.offset}")
         if args.concat > 1:
             parts.append(f"concat{args.concat}")
         parts.append("ablation" if args.ablation else variants[0].slug)

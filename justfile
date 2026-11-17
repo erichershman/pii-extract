@@ -89,3 +89,13 @@ test-redact strategy="placeholder":
 # Compare both backends on a public dataset sample; prints a Markdown table.
 bench *args:
     uv run python -m bench.run {{args}}
+
+# --- ONNX ----------------------------------------------------------------------
+
+# Export urchade/gliner_multi_pii-v1 to ONNX (fp32) under models/ (gitignored).
+export-onnx *args:
+    uv run python scripts/export_onnx.py {{args}}
+
+# PyTorch vs ONNX Runtime parity on the exported model.
+onnx-parity:
+    uv run pytest tests/model/test_onnx_parity.py -q

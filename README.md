@@ -38,7 +38,9 @@ The environment is pinned by `uv.lock`.
 ```bash
 just setup          # .venv with torch (CUDA 12.8 wheels), gliner2, gliner, dev tools
 just unit           # 266 pure-logic tests, no model needed (under a second)
-just model-tests    # 21 tests on real weights (downloads ~1.5 GB on first run)
+just model-tests    # 27 tests on real weights (downloads ~1.5 GB on first run)
+just export-onnx    # optional: export the urchade model to ONNX under models/
+just onnx-parity    # PyTorch vs ONNX Runtime: identical spans, scores within 1e-3
 ```
 
 ### Service
@@ -247,7 +249,21 @@ So: **~14 ms per request on an RTX 5080** for a short document with the
 default model. The joined run has only 20 texts, so its p95 is close to its
 maximum and varies between runs.
 
-### Validators and an extra label
+### Headline: validators on a held-out sample
+
+The `ssn` validator was fixed after inspecting its rejections on the sample
+above, so that sample is a tuning set for validator results. On 500 documents
+it had not seen (`--offset 500`), GLiNER2-PII scores:
+
+| Variant | ssn | Micro average (7 labels) |
+|---|---|---|
+| baseline | 0.482 / 0.849 / 0.615 | 0.677 / 0.915 / 0.778 |
+| validators on | 0.969 / 0.849 / 0.905 | 0.777 / 0.892 / 0.831 |
+
+`ssn` recall is unchanged and its precision doubles. Overall recall drops from
+0.915 to 0.892, almost all on `credit card number` (0.921 to 0.556).
+
+### Validators and an extra label (tuning sample)
 
 The same 500 documents, rerun with validators on (`just bench --validators on`)
 and with an extra label (`just bench --ablation`). `ssn` and the

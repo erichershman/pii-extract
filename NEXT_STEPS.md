@@ -6,7 +6,7 @@ Background for every decision referenced here is in [DESIGN.md](DESIGN.md).
 
 State: the core pipeline, both backends, schema packs with validators, the
 API, CLI, container, CI workflow, and a benchmark with an ablation mode are
-working and tested (266 pure-logic tests, 21 model tests). The repository is
+working and tested (266 pure-logic tests, 27 model tests). The repository is
 on GitHub and the Actions workflow passes there.
 
 Done since the first version of this list: cross-label conflicts are
@@ -69,29 +69,33 @@ within one token of a cut edge. `_touches_cut_edge` in
 `src/pii_extract/pipeline.py` is the only place to change; it would need the
 window's token offsets passed in.
 
-## 2. ONNX export and an ONNX backend
+## 2. ONNX: from export to a backend
 
-Spec Stage 1 defers this and the target summary names ONNX Runtime.
+Done: `just export-onnx` exports `urchade/gliner_multi_pii-v1` (fp32) and
+`just onnx-parity` shows identical spans against PyTorch with a max score
+delta of 1.04e-04 (DESIGN.md, section 12). Remaining, in order:
 
-- `gliner` 0.2.30 already contains an export path and an onnxruntime loading
-  path (`GLiNER.from_pretrained(..., load_onnx_model=True)`; see
-  `_run_torch_onnx_export` in `gliner/model.py`). Start with the urchade
-  model: write `scripts/export_onnx.py` around it and confirm the exported
-  model reproduces the torch spans.
-- `gliner2` 2.1.0 has **no** ONNX export. Exporting GLiNER2-PII means tracing
-  the encoder plus span head by hand, including the schema prompt and the
-  count-prediction layer. Treat it as a separate, larger task. Community ONNX
-  conversions exist on the Hub, but the provenance rule says to build the
-  export rather than adopt one.
-- Add `OnnxBackend` in `src/pii_extract/backends/onnx_backend.py` implementing
-  the existing `Backend` protocol. `tokenize` and `window_budget` can reuse
-  `backends/budget.py`; only `predict` and the span decoding are new. Register
-  it in `BACKENDS` and add `onnxruntime-gpu` as a new optional extra.
-- Done when: a parity test in `tests/model` asserts the ONNX backend returns
-  the same span keys as the torch backend on the existing fixtures (scores
-  within a tolerance), and the benchmark table has an ONNX row with latency.
-- `.gitignore` already excludes `*.onnx` and `models/`.
-- Quantization and GPU offload tiers stay out of scope until this lands.
+1. **`OnnxBackend` behind the protocol.** Add
+   `src/pii_extract/backends/onnx_backend.py` and register it in `BACKENDS`.
+   The parity test already shows `GlinerBackend`'s `tokenize`,
+   `window_budget` and span decoding work unchanged on the ONNX-loaded model,
+   so the new backend is mostly a loader
+   (`GLiNER.from_pretrained(dir, load_onnx_model=True, load_tokenizer=True)`)
+   plus a setting for the model directory. Then move the parity test onto it.
+2. **Execution-provider fallback, CUDA to CPU.** The `onnx` extra installs the
+   CPU build of ONNX Runtime. Add `onnxruntime-gpu`, request
+   `CUDAExecutionProvider` first and fall back to `CPUExecutionProvider`,
+   report the provider actually in use on `/healthz`, and rerun parity on the
+   CUDA provider. Check that the CUDA 12.8 libraries torch bundles satisfy it.
+3. **Latency.** Add the ONNX backend to `bench/run.py` and report ms per
+   request beside the PyTorch rows, on GPU and CPU.
+4. **fp16 and int8 comparison.** Export fp16 and a quantized graph
+   (`export_to_onnx(quantize=True)`), and report size, latency, parity
+   against fp32 (span mismatches, max score delta) and benchmark F1 for each.
+5. **GLiNER2 export.** `gliner2` 2.1.0 has no export path. Evaluate the
+   `gliner2-onnx` package for exporting GLiNER2-PII, with the same parity
+   test as the acceptance bar. Mind the provenance rule: build the export
+   from the public weights rather than adopting a third-party converted model.
 
 ## 3. Performance
 

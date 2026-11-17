@@ -1,5 +1,5 @@
 import pytest
-from bench.gretel import gold_spans, parse_entities
+from bench.gretel import BASE_LABELS, gold_spans, label_table, parse_entities, prompts
 from bench.metrics import Counts, micro_average, percentile, score_exact, score_overlap
 
 
@@ -79,3 +79,25 @@ def test_gold_spans_merge_first_and_last_name_and_drop_nested():
         ],
     )
     assert gold == [(10, 18, "person"), (23, 26, "person")]
+
+
+def test_label_table_is_configurable():
+    assert list(label_table()) == list(BASE_LABELS) and len(BASE_LABELS) == 7
+    extended = label_table(["medical record number"])
+    assert list(extended)[-1] == "medical record number"
+    assert prompts(extended)[-1] == "medical record number"
+    with pytest.raises(ValueError, match="unknown extra label"):
+        label_table(["shoe size"])
+
+
+def test_gold_spans_follow_the_label_table():
+    text = "MRN MRN-000123 for SSN 000-12-3456"
+    entities = [
+        {"entity": "MRN-000123", "types": ["medical_record_number"]},
+        {"entity": "000-12-3456", "types": ["ssn"]},
+    ]
+    assert gold_spans(text, entities)[0] == [(23, 34, "ssn")]
+    assert gold_spans(text, entities, label_table(["medical record number"]))[0] == [
+        (4, 14, "medical record number"),
+        (23, 34, "ssn"),
+    ]

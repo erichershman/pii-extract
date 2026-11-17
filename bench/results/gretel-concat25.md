@@ -18,5 +18,5 @@ Latency per text through `Pipeline.extract` (one request at a time, after warm-u
 
 | Model | Device | Mean | p50 | p95 | Max | Windows/text |
 |---|---|---:|---:|---:|---:|---:|
-| `fastino/gliner2-privacy-filter-PII-multi` | cuda | 74.3 ms | 71.6 ms | 84.8 ms | 96.3 ms | 5.30 |
-| `urchade/gliner_multi_pii-v1` | cuda | 84.4 ms | 84.1 ms | 100.5 ms | 108.7 ms | 6.50 |
+| `fastino/gliner2-privacy-filter-PII-multi` | cuda | 85.3 ms | 72.7 ms | 179.2 ms | 189.0 ms | 5.30 |
+| `urchade/gliner_multi_pii-v1` | cuda | 105.6 ms | 86.7 ms | 202.1 ms | 207.5 ms | 6.50 |

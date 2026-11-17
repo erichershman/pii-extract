@@ -10,6 +10,9 @@
       "gliner"
     ],
     "concat": 25,
+    "validators": "off",
+    "extra_labels": [],
+    "ablation": false,
     "no_save": false
   },
   "hardware": "NVIDIA GeForce RTX 5080 (CUDA 12.8, torch 2.11.0+cu128)",
@@ -18,15 +21,17 @@
       "backend": "gliner2",
       "model": "fastino/gliner2-privacy-filter-PII-multi",
       "device": "cuda",
-      "load_seconds": 4.67,
+      "variant": "baseline",
+      "validators": false,
+      "extra_labels": [],
       "documents": 20,
       "windows": 106,
       "unlocated_gold_annotations": 4,
       "latency_ms": {
-        "mean": 74.28,
-        "p50": 71.63,
-        "p95": 84.76,
-        "max": 96.35
+        "mean": 85.31,
+        "p50": 72.71,
+        "p95": 179.23,
+        "max": 189.01
       },
       "exact": {
         "person": {
@@ -107,15 +112,17 @@
       "backend": "gliner",
       "model": "urchade/gliner_multi_pii-v1",
       "device": "cuda",
-      "load_seconds": 3.68,
+      "variant": "baseline",
+      "validators": false,
+      "extra_labels": [],
       "documents": 20,
       "windows": 130,
       "unlocated_gold_annotations": 4,
       "latency_ms": {
-        "mean": 84.36,
-        "p50": 84.06,
-        "p95": 100.53,
-        "max": 108.73
+        "mean": 105.62,
+        "p50": 86.7,
+        "p95": 202.09,
+        "max": 207.52
       },
       "exact": {
         "person": {

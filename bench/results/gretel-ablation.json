@@ -1,0 +1,797 @@
+{
+  "dataset": "gretelai/gretel-pii-masking-en-v1",
+  "args": {
+    "limit": 500,
+    "seed": 0,
+    "threshold": 0.5,
+    "device": "auto",
+    "backends": [
+      "gliner2",
+      "gliner"
+    ],
+    "concat": 1,
+    "validators": "off",
+    "extra_labels": [],
+    "ablation": true,
+    "no_save": false
+  },
+  "hardware": "NVIDIA GeForce RTX 5080 (CUDA 12.8, torch 2.11.0+cu128)",
+  "results": [
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "variant": "baseline",
+      "validators": false,
+      "extra_labels": [],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 13.1,
+        "p50": 12.81,
+        "p95": 15.67,
+        "max": 20.52
+      },
+      "exact": {
+        "person": {
+          "tp": 212,
+          "fp": 135,
+          "fn": 18
+        },
+        "email": {
+          "tp": 96,
+          "fp": 7,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 13,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 148,
+          "fp": 187,
+          "fn": 13
+        },
+        "credit card number": {
+          "tp": 55,
+          "fp": 16,
+          "fn": 9
+        },
+        "date of birth": {
+          "tp": 228,
+          "fp": 96,
+          "fn": 12
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 14,
+          "fn": 9
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 225,
+          "fp": 122,
+          "fn": 5
+        },
+        "email": {
+          "tp": 97,
+          "fp": 6,
+          "fn": 0
+        },
+        "phone number": {
+          "tp": 72,
+          "fp": 10,
+          "fn": 3
+        },
+        "ssn": {
+          "tp": 150,
+          "fp": 185,
+          "fn": 11
+        },
+        "credit card number": {
+          "tp": 57,
+          "fp": 14,
+          "fn": 7
+        },
+        "date of birth": {
+          "tp": 229,
+          "fp": 95,
+          "fn": 11
+        },
+        "ip address": {
+          "tp": 89,
+          "fp": 13,
+          "fn": 8
+        }
+      }
+    },
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "variant": "validators on",
+      "validators": true,
+      "extra_labels": [],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 13.55,
+        "p50": 13.26,
+        "p95": 16.01,
+        "max": 19.59
+      },
+      "exact": {
+        "person": {
+          "tp": 212,
+          "fp": 135,
+          "fn": 18
+        },
+        "email": {
+          "tp": 96,
+          "fp": 6,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 11,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 85,
+          "fp": 4,
+          "fn": 76
+        },
+        "credit card number": {
+          "tp": 36,
+          "fp": 0,
+          "fn": 28
+        },
+        "date of birth": {
+          "tp": 228,
+          "fp": 96,
+          "fn": 12
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 6,
+          "fn": 9
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 225,
+          "fp": 122,
+          "fn": 5
+        },
+        "email": {
+          "tp": 96,
+          "fp": 6,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 70,
+          "fp": 10,
+          "fn": 5
+        },
+        "ssn": {
+          "tp": 85,
+          "fp": 4,
+          "fn": 76
+        },
+        "credit card number": {
+          "tp": 36,
+          "fp": 0,
+          "fn": 28
+        },
+        "date of birth": {
+          "tp": 229,
+          "fp": 95,
+          "fn": 11
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 6,
+          "fn": 9
+        }
+      }
+    },
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "variant": "+ medical record number",
+      "validators": false,
+      "extra_labels": [
+        "medical record number"
+      ],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 13.84,
+        "p50": 13.53,
+        "p95": 16.4,
+        "max": 19.69
+      },
+      "exact": {
+        "person": {
+          "tp": 209,
+          "fp": 124,
+          "fn": 21
+        },
+        "email": {
+          "tp": 96,
+          "fp": 8,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 13,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 144,
+          "fp": 51,
+          "fn": 17
+        },
+        "credit card number": {
+          "tp": 56,
+          "fp": 12,
+          "fn": 8
+        },
+        "date of birth": {
+          "tp": 225,
+          "fp": 92,
+          "fn": 15
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 14,
+          "fn": 9
+        },
+        "medical record number": {
+          "tp": 245,
+          "fp": 37,
+          "fn": 39
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 224,
+          "fp": 109,
+          "fn": 6
+        },
+        "email": {
+          "tp": 97,
+          "fp": 7,
+          "fn": 0
+        },
+        "phone number": {
+          "tp": 72,
+          "fp": 10,
+          "fn": 3
+        },
+        "ssn": {
+          "tp": 147,
+          "fp": 48,
+          "fn": 14
+        },
+        "credit card number": {
+          "tp": 57,
+          "fp": 11,
+          "fn": 7
+        },
+        "date of birth": {
+          "tp": 226,
+          "fp": 91,
+          "fn": 14
+        },
+        "ip address": {
+          "tp": 89,
+          "fp": 13,
+          "fn": 8
+        },
+        "medical record number": {
+          "tp": 249,
+          "fp": 33,
+          "fn": 35
+        }
+      }
+    },
+    {
+      "backend": "gliner2",
+      "model": "fastino/gliner2-privacy-filter-PII-multi",
+      "device": "cuda",
+      "variant": "validators on + medical record number",
+      "validators": true,
+      "extra_labels": [
+        "medical record number"
+      ],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 13.68,
+        "p50": 13.46,
+        "p95": 16.7,
+        "max": 23.81
+      },
+      "exact": {
+        "person": {
+          "tp": 209,
+          "fp": 124,
+          "fn": 21
+        },
+        "email": {
+          "tp": 96,
+          "fp": 6,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 11,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 3,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 225,
+          "fp": 92,
+          "fn": 15
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 6,
+          "fn": 9
+        },
+        "medical record number": {
+          "tp": 245,
+          "fp": 37,
+          "fn": 39
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 224,
+          "fp": 109,
+          "fn": 6
+        },
+        "email": {
+          "tp": 96,
+          "fp": 6,
+          "fn": 1
+        },
+        "phone number": {
+          "tp": 70,
+          "fp": 10,
+          "fn": 5
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 3,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 226,
+          "fp": 91,
+          "fn": 14
+        },
+        "ip address": {
+          "tp": 88,
+          "fp": 6,
+          "fn": 9
+        },
+        "medical record number": {
+          "tp": 249,
+          "fp": 33,
+          "fn": 35
+        }
+      }
+    },
+    {
+      "backend": "gliner",
+      "model": "urchade/gliner_multi_pii-v1",
+      "device": "cuda",
+      "variant": "baseline",
+      "validators": false,
+      "extra_labels": [],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 16.04,
+        "p50": 15.58,
+        "p95": 20.43,
+        "max": 26.13
+      },
+      "exact": {
+        "person": {
+          "tp": 217,
+          "fp": 172,
+          "fn": 13
+        },
+        "email": {
+          "tp": 94,
+          "fp": 9,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 67,
+          "fp": 6,
+          "fn": 8
+        },
+        "ssn": {
+          "tp": 141,
+          "fp": 6,
+          "fn": 20
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 209,
+          "fp": 41,
+          "fn": 31
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 6,
+          "fn": 32
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 222,
+          "fp": 167,
+          "fn": 8
+        },
+        "email": {
+          "tp": 95,
+          "fp": 8,
+          "fn": 2
+        },
+        "phone number": {
+          "tp": 68,
+          "fp": 5,
+          "fn": 6
+        },
+        "ssn": {
+          "tp": 144,
+          "fp": 3,
+          "fn": 15
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 212,
+          "fp": 38,
+          "fn": 26
+        },
+        "ip address": {
+          "tp": 67,
+          "fp": 4,
+          "fn": 30
+        }
+      }
+    },
+    {
+      "backend": "gliner",
+      "model": "urchade/gliner_multi_pii-v1",
+      "device": "cuda",
+      "variant": "validators on",
+      "validators": true,
+      "extra_labels": [],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 15.6,
+        "p50": 15.15,
+        "p95": 19.58,
+        "max": 25.51
+      },
+      "exact": {
+        "person": {
+          "tp": 217,
+          "fp": 172,
+          "fn": 13
+        },
+        "email": {
+          "tp": 94,
+          "fp": 5,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 67,
+          "fp": 5,
+          "fn": 8
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 2,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 209,
+          "fp": 41,
+          "fn": 31
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 2,
+          "fn": 32
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 222,
+          "fp": 167,
+          "fn": 8
+        },
+        "email": {
+          "tp": 94,
+          "fp": 5,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 67,
+          "fp": 5,
+          "fn": 8
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 2,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 212,
+          "fp": 38,
+          "fn": 26
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 2,
+          "fn": 32
+        }
+      }
+    },
+    {
+      "backend": "gliner",
+      "model": "urchade/gliner_multi_pii-v1",
+      "device": "cuda",
+      "variant": "+ medical record number",
+      "validators": false,
+      "extra_labels": [
+        "medical record number"
+      ],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 15.84,
+        "p50": 15.41,
+        "p95": 19.97,
+        "max": 24.95
+      },
+      "exact": {
+        "person": {
+          "tp": 217,
+          "fp": 171,
+          "fn": 13
+        },
+        "email": {
+          "tp": 94,
+          "fp": 9,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 68,
+          "fp": 6,
+          "fn": 7
+        },
+        "ssn": {
+          "tp": 141,
+          "fp": 7,
+          "fn": 20
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 210,
+          "fp": 42,
+          "fn": 30
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 6,
+          "fn": 32
+        },
+        "medical record number": {
+          "tp": 213,
+          "fp": 16,
+          "fn": 71
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 222,
+          "fp": 166,
+          "fn": 8
+        },
+        "email": {
+          "tp": 95,
+          "fp": 8,
+          "fn": 2
+        },
+        "phone number": {
+          "tp": 69,
+          "fp": 5,
+          "fn": 5
+        },
+        "ssn": {
+          "tp": 144,
+          "fp": 4,
+          "fn": 15
+        },
+        "credit card number": {
+          "tp": 53,
+          "fp": 7,
+          "fn": 11
+        },
+        "date of birth": {
+          "tp": 213,
+          "fp": 39,
+          "fn": 25
+        },
+        "ip address": {
+          "tp": 67,
+          "fp": 4,
+          "fn": 30
+        },
+        "medical record number": {
+          "tp": 218,
+          "fp": 11,
+          "fn": 65
+        }
+      }
+    },
+    {
+      "backend": "gliner",
+      "model": "urchade/gliner_multi_pii-v1",
+      "device": "cuda",
+      "variant": "validators on + medical record number",
+      "validators": true,
+      "extra_labels": [
+        "medical record number"
+      ],
+      "documents": 500,
+      "windows": 500,
+      "unlocated_gold_annotations": 4,
+      "latency_ms": {
+        "mean": 15.73,
+        "p50": 15.3,
+        "p95": 19.94,
+        "max": 25.11
+      },
+      "exact": {
+        "person": {
+          "tp": 217,
+          "fp": 171,
+          "fn": 13
+        },
+        "email": {
+          "tp": 94,
+          "fp": 5,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 68,
+          "fp": 5,
+          "fn": 7
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 2,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 210,
+          "fp": 42,
+          "fn": 30
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 2,
+          "fn": 32
+        },
+        "medical record number": {
+          "tp": 213,
+          "fp": 16,
+          "fn": 71
+        }
+      },
+      "overlap": {
+        "person": {
+          "tp": 222,
+          "fp": 166,
+          "fn": 8
+        },
+        "email": {
+          "tp": 94,
+          "fp": 5,
+          "fn": 3
+        },
+        "phone number": {
+          "tp": 68,
+          "fp": 5,
+          "fn": 7
+        },
+        "ssn": {
+          "tp": 81,
+          "fp": 2,
+          "fn": 80
+        },
+        "credit card number": {
+          "tp": 37,
+          "fp": 0,
+          "fn": 27
+        },
+        "date of birth": {
+          "tp": 213,
+          "fp": 39,
+          "fn": 25
+        },
+        "ip address": {
+          "tp": 65,
+          "fp": 2,
+          "fn": 32
+        },
+        "medical record number": {
+          "tp": 218,
+          "fp": 11,
+          "fn": 65
+        }
+      }
+    }
+  ]
+}

@@ -19,7 +19,9 @@ DATASET_ID = "gretelai/gretel-pii-masking-en-v1"
 # The same natural-language prompt is used for both backends: this measures
 # zero-shot behaviour, not either model's native label vocabulary.
 # Address-like types are deliberately left out of scope.
-LABELS: dict[str, tuple[str, tuple[str, ...]]] = {
+LabelTable = dict[str, tuple[str, tuple[str, ...]]]
+
+BASE_LABELS: LabelTable = {
     "person": ("person", ("name", "first_name", "last_name")),
     "email": ("email", ("email",)),
     "phone number": ("phone number", ("phone_number",)),
@@ -28,8 +30,32 @@ LABELS: dict[str, tuple[str, tuple[str, ...]]] = {
     "date of birth": ("date of birth", ("date_of_birth",)),
     "ip address": ("ip address", ("ipv4", "ipv6")),
 }
-PROMPT_TO_LABEL = {prompt: label for label, (prompt, _) in LABELS.items()}
-TYPE_TO_LABEL = {t: label for label, (_, types) in LABELS.items() for t in types}
+
+# Optional labels that can be added to a run with --extra-labels. Each gives
+# the models somewhere else to put identifiers that are not in the base set.
+EXTRA_LABELS: LabelTable = {
+    "medical record number": ("medical record number", ("medical_record_number",)),
+    "customer id": ("customer id", ("customer_id",)),
+    "employee id": ("employee id", ("employee_id",)),
+}
+
+
+def label_table(extra: tuple[str, ...] | list[str] = ()) -> LabelTable:
+    """The base labels plus the named extras, in a stable order."""
+    table = dict(BASE_LABELS)
+    for name in extra:
+        if name not in EXTRA_LABELS:
+            raise ValueError(f"unknown extra label {name!r}; choose from {sorted(EXTRA_LABELS)}")
+        table[name] = EXTRA_LABELS[name]
+    return table
+
+
+def prompts(table: LabelTable) -> list[str]:
+    return [prompt for prompt, _ in table.values()]
+
+
+def prompt_to_label(table: LabelTable) -> dict[str, str]:
+    return {prompt: label for label, (prompt, _) in table.items()}
 
 
 def parse_entities(raw: Any) -> list[dict[str, Any]]:
@@ -48,7 +74,9 @@ def _occurrences(text: str, value: str) -> list[tuple[int, int]]:
     return [(m.start(), m.end()) for m in re.finditer(pattern, text)]
 
 
-def gold_spans(text: str, entities: list[dict[str, Any]]) -> tuple[list[GoldSpan], int]:
+def gold_spans(
+    text: str, entities: list[dict[str, Any]], table: LabelTable = BASE_LABELS
+) -> tuple[list[GoldSpan], int]:
     """Gold (start, end, label) spans, plus how many annotations could not be located.
 
     Two normalizations, both needed for a like-for-like comparison with span
@@ -60,11 +88,12 @@ def gold_spans(text: str, entities: list[dict[str, Any]]) -> tuple[list[GoldSpan
       first name followed by a last name is one "person", as the models
       report it.
     """
+    type_to_label = {t: label for label, (_, types) in table.items() for t in types}
     found: set[GoldSpan] = set()
     missing = 0
     for entity in entities:
         value = str(entity.get("entity", "")).strip()
-        labels = {TYPE_TO_LABEL[t] for t in entity.get("types", []) if t in TYPE_TO_LABEL}
+        labels = {type_to_label[t] for t in entity.get("types", []) if t in type_to_label}
         if not value or not labels:
             continue
         positions = _occurrences(text, value)

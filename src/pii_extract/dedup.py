@@ -103,7 +103,7 @@ def _union_overlapping(candidates: list[Candidate], text: str) -> list[Candidate
                 score=max(previous.span.score, candidate.span.score),
                 text=text[start:end],
             )
-            # The union is only as trustworthy as its most trustworthy part.
+            # A union counts as seen whole if any of its parts was.
             merged[-1] = Candidate(union, clipped=previous.clipped and candidate.clipped)
         else:
             merged.append(candidate)

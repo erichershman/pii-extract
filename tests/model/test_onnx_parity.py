@@ -4,8 +4,12 @@ Needs the exported graph (``just export-onnx``) and the ``onnx`` extra; skips
 otherwise. Both runtimes go through the same adapter and the same pipeline,
 so what is compared is the output AFTER span decoding, windowing and merging.
 
-Tolerance: labels and start/end offsets must be identical; scores must agree
-within SCORE_TOLERANCE.
+Tolerance: labels and start/end offsets must be identical on every provider.
+Scores must agree within 1e-3 on the CPU provider and within 1e-2 on the CUDA
+provider (``PII_ONNX_PROVIDER=cuda``). The CUDA figure is looser because that
+is what the provider does: against PyTorch on the same GPU the largest
+difference observed is 4.4e-03 (median 1.6e-04), all on mid-confidence spans,
+with no span gained or lost. On CPU the largest observed is 1.0e-04.
 """
 
 from __future__ import annotations
@@ -16,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from pii_extract.backends import GlinerBackend
-from pii_extract.backends.base import ModelSession
+from pii_extract.backends import create_backend
 from pii_extract.pipeline import Pipeline
 from pii_extract.spans import verify_spans
 
-SCORE_TOLERANCE = 1e-3
+PROVIDER = os.environ.get("PII_ONNX_PROVIDER", "cpu")
+SCORE_TOLERANCE = {"cpu": 1e-3, "cuda": 1e-2}[PROVIDER]
 ONNX_DIR = Path(os.environ.get("PII_ONNX_DIR", "models/gliner_multi_pii-v1-onnx"))
 LABELS = ["person", "email", "phone number", "credit card number"]
 FILLER = "The quarterly report was reviewed by the committee and no action was required. "
@@ -45,13 +49,9 @@ def onnx_backend():
         pytest.skip("the `onnx` extra (onnxruntime) is not installed")
     if not (ONNX_DIR / "model.onnx").exists():
         pytest.skip(f"no exported model at {ONNX_DIR}; run `just export-onnx`")
-    from gliner import GLiNER
-
-    def load(device: str):
-        return GLiNER.from_pretrained(str(ONNX_DIR), load_onnx_model=True, load_tokenizer=True)
-
-    backend = GlinerBackend(model_id=str(ONNX_DIR), device="cpu")
-    backend._session = ModelSession(load, device="cpu")
+    backend = create_backend("onnx", model_id=str(ONNX_DIR), onnx_provider=PROVIDER)
+    backend.load()
+    assert backend.providers[0].startswith("CUDA" if backend.provider == "cuda" else "CPU")
     yield backend
     backend.close()
 
@@ -103,6 +103,22 @@ def test_windowed_long_input_decodes_to_identical_spans(gliner_backend, onnx_bac
     assert len(merged_torch) > 60
     with capsys.disabled():
         print(
-            f"\nONNX parity: {len(windows)} windows, {total} window-level spans, "
+            f"\nONNX parity ({PROVIDER}): {len(windows)} windows, {total} window-level spans, "
             f"{len(merged_torch)} merged spans, max score delta {worst:.2e}"
         )
+
+
+def test_cuda_probe_agrees_with_what_the_backend_can_do():
+    if importlib.util.find_spec("onnxruntime") is None:
+        pytest.skip("the `onnx` extra (onnxruntime) is not installed")
+    import onnxruntime
+
+    from pii_extract.backends.onnx_probe import probe_cuda_provider
+
+    result = probe_cuda_provider()
+    if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
+        assert not result.ok and "no CUDA provider" in result.detail
+    elif PROVIDER == "cuda":
+        assert result.ok, result.detail
+    else:
+        assert result.detail  # either outcome is legitimate on a CPU-only run; it must not crash

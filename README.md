@@ -37,10 +37,10 @@ The environment is pinned by `uv.lock`.
 
 ```bash
 just setup          # .venv with torch (CUDA 12.8 wheels), gliner2, gliner, dev tools
-just unit           # 266 pure-logic tests, no model needed (under a second)
-just model-tests    # 27 tests on real weights (downloads ~1.5 GB on first run)
+just unit           # 270 pure-logic tests, no model needed (under a second)
+just model-tests    # 28 tests on real weights (downloads ~1.5 GB on first run)
 just export-onnx    # optional: export the urchade model to ONNX under models/
-just onnx-parity    # PyTorch vs ONNX Runtime: identical spans, scores within 1e-3
+just onnx-parity    # PyTorch vs ONNX Runtime: identical spans, scores within tolerance
 ```
 
 ### Service
@@ -134,7 +134,8 @@ names below.
 
 | Setting | Env var | CLI flag | Default |
 |---|---|---|---|
-| `backend` | `PII_BACKEND` | `--backend` | `gliner2` (or `gliner`) |
+| `backend` | `PII_BACKEND` | `--backend` | `gliner2` (or `gliner`, or `onnx`) |
+| `onnx_provider` | `PII_ONNX_PROVIDER` | `--onnx-provider` | `cpu` (or `cuda`); `onnx` backend only |
 | `model` | `GLINER_MODEL` | `--model` | the backend's default model |
 | `device` | `PII_DEVICE` | `--device` | `auto` (CUDA if available, else CPU) |
 | `schema_pack` | `PII_SCHEMA_PACK` | `--schema-pack` | `pii` (or `pii-extended`) |
@@ -153,6 +154,40 @@ names below.
 Set `PII_HASH_SALT` to a secret if `hash` redactions must be stable across
 requests. Without it each request gets a fresh random salt, so digests are
 consistent within a document but cannot be linked across documents.
+
+## ONNX backend
+
+`PII_BACKEND=onnx` runs an exported copy of `urchade/gliner_multi_pii-v1` on
+ONNX Runtime, through the same tokenizer, windowing and span decoding as the
+PyTorch backend.
+
+```bash
+uv sync --frozen --all-extras     # includes the onnx extra (onnxruntime-gpu)
+just export-onnx                  # writes models/gliner_multi_pii-v1-onnx (not committed)
+PII_BACKEND=onnx just serve                          # CPU provider (default)
+PII_BACKEND=onnx PII_ONNX_PROVIDER=cuda just serve   # CUDA provider
+```
+
+The provider is explicit: `cpu` unless you set `PII_ONNX_PROVIDER=cuda`, and
+the `device` setting does not affect it. With `cuda`, the backend first tries
+the CUDA provider in a child process; if that crashes or CUDA is unusable,
+startup fails with an error naming the cause instead of taking the service
+down. The CUDA provider needs a CUDA 13 runtime and cuDNN 9 on the host
+(`onnxruntime-gpu` cannot use the CUDA 12.8 libraries torch bundles). The
+Docker image does not include the `onnx` extra or an exported model yet.
+
+Against PyTorch on the same RTX 5080, on synthetic fixtures including a
+windowed long text (146 spans): identical labels and offsets on both
+providers; largest score difference 1.0e-04 on the CPU provider and 4.4e-03 on
+the CUDA provider.
+
+| Runtime on CUDA | Batch 1, short text | Batch 1, full window | Batch 8, full windows |
+|---|---:|---:|---:|
+| PyTorch | 11.5 ms (p95 11.5) | 22.8 ms (p95 23.8) | 85.7 ms (p95 85.1) |
+| ONNX Runtime | 7.6 ms (p95 8.1) | 16.1 ms (p95 16.7) | 76.8 ms (p95 76.4) |
+
+Mean per call, model only (`backend.predict`), 384-token windows. ONNX Runtime
+is about a third faster at batch 1 and about 10% faster at batch 8.
 
 ## Schema packs and validators
 

@@ -6,7 +6,7 @@ Background for every decision referenced here is in [DESIGN.md](DESIGN.md).
 
 State: the core pipeline, both backends, schema packs with validators, the
 API, CLI, container, CI workflow, and a benchmark with an ablation mode are
-working and tested (266 pure-logic tests, 27 model tests). The repository is
+working and tested (270 pure-logic tests, 28 model tests). The repository is
 on GitHub and the Actions workflow passes there.
 
 Done since the first version of this list: cross-label conflicts are
@@ -71,28 +71,35 @@ window's token offsets passed in.
 
 ## 2. ONNX: from export to a backend
 
-Done: `just export-onnx` exports `urchade/gliner_multi_pii-v1` (fp32) and
-`just onnx-parity` shows identical spans against PyTorch with a max score
-delta of 1.04e-04 (DESIGN.md, section 12). Remaining, in order:
+Done (DESIGN.md, section 12): `just export-onnx` exports
+`urchade/gliner_multi_pii-v1` (fp32); `OnnxBackend` runs it behind the
+backend protocol with an explicit provider (`PII_ONNX_PROVIDER=cpu|cuda`,
+default `cpu`) and an out-of-process CUDA probe; `just onnx-parity` shows
+identical spans against PyTorch on both providers; ONNX Runtime on CUDA is
+about a third faster than PyTorch at batch 1. The CUDA provider's earlier
+segfault was a host fault (stale native NVIDIA driver packages in WSL) and
+is fixed on the host. Remaining, in order:
 
-1. **`OnnxBackend` behind the protocol.** Add
-   `src/pii_extract/backends/onnx_backend.py` and register it in `BACKENDS`.
-   The parity test already shows `GlinerBackend`'s `tokenize`,
-   `window_budget` and span decoding work unchanged on the ONNX-loaded model,
-   so the new backend is mostly a loader
-   (`GLiNER.from_pretrained(dir, load_onnx_model=True, load_tokenizer=True)`)
-   plus a setting for the model directory. Then move the parity test onto it.
-2. **Execution-provider fallback, CUDA to CPU.** The `onnx` extra installs the
-   CPU build of ONNX Runtime. Add `onnxruntime-gpu`, request
-   `CUDAExecutionProvider` first and fall back to `CPUExecutionProvider`,
-   report the provider actually in use on `/healthz`, and rerun parity on the
-   CUDA provider. Check that the CUDA 12.8 libraries torch bundles satisfy it.
-3. **Latency.** Add the ONNX backend to `bench/run.py` and report ms per
-   request beside the PyTorch rows, on GPU and CPU.
-4. **fp16 and int8 comparison.** Export fp16 and a quantized graph
+1. **Explain the CUDA provider's score differences.** Against PyTorch on the
+   same GPU, 26 of 146 spans differ by more than 1e-03 (max 4.4e-03), where
+   the CPU provider stays under 1.1e-04. Check graph optimization level,
+   cuDNN algorithm selection for the model's LSTM, and TF32. The parity
+   test's CUDA tolerance (1e-2) can tighten once this is understood.
+2. **ONNX backend in the container.** The image installs only the `models`
+   extra and ships no exported model. It is also built on CUDA 12.8, and
+   `onnxruntime-gpu` needs CUDA 13 and cuDNN 9 for its CUDA provider. Either add a CUDA 13 image
+   variant for the ONNX backend or install `onnxruntime-gpu[cuda,cudnn]` in
+   an environment separate from torch (the cu12 and cu13 NVIDIA packages
+   overwrite each other's files).
+3. **Report the active provider on `/healthz`.** The backend knows it
+   (`backend.providers`); the health response does not show it yet.
+4. **Benchmark integration.** Add the ONNX backend to `bench/run.py` so
+   accuracy and end-to-end latency sit beside the PyTorch rows. Current
+   latency figures are ad hoc, model-only, on synthetic fixtures.
+5. **fp16 and int8 comparison.** Export fp16 and a quantized graph
    (`export_to_onnx(quantize=True)`), and report size, latency, parity
    against fp32 (span mismatches, max score delta) and benchmark F1 for each.
-5. **GLiNER2 export.** `gliner2` 2.1.0 has no export path. Evaluate the
+6. **GLiNER2 export.** `gliner2` 2.1.0 has no export path. Evaluate the
    `gliner2-onnx` package for exporting GLiNER2-PII, with the same parity
    test as the acceptance bar. Mind the provenance rule: build the export
    from the public weights rather than adopting a third-party converted model.

@@ -145,3 +145,82 @@ def test_subword_costs_have_a_floor_of_one():
 
 def test_label_prompt_cost_counts_a_marker_per_label():
     assert label_prompt_cost(CharTokenizer(), ["ssn", "email"]) == (3 + 1) + (5 + 1)
+
+
+def test_onnx_provider_is_explicit_and_defaults_to_cpu():
+    from pii_extract.backends.onnx_backend import PROVIDERS
+    from pii_extract.config import Settings, build_pipeline, load_settings
+
+    backend = create_backend("onnx", device="cuda")
+    assert backend.name == "onnx" and not backend.loaded and backend.providers == []
+    assert backend.provider == "cpu" and backend.device == "cpu", (
+        "device does not pick the provider"
+    )
+    assert create_backend("onnx", onnx_provider="cuda").device == "cuda"
+    assert PROVIDERS["cpu"] == ["CPUExecutionProvider"]
+    with pytest.raises(ValueError, match="unknown ONNX provider"):
+        create_backend("onnx", onnx_provider="tensorrt")
+
+    assert Settings().onnx_provider == "cpu"
+    settings = load_settings(env={"PII_BACKEND": "onnx", "PII_ONNX_PROVIDER": "cuda"})
+    assert build_pipeline(settings).backend.provider == "cuda"
+    # Other backends ignore the setting.
+    assert create_backend("gliner", device="cpu", onnx_provider="cuda").name == "gliner"
+
+
+def test_cuda_probe_reports_a_crashing_child_instead_of_crashing():
+    import sys
+
+    from pii_extract.backends.onnx_probe import probe_cuda_provider
+
+    def child(code: str) -> list[str]:
+        return [sys.executable, "-c", code]
+
+    crashed = probe_cuda_provider(child("import os, signal; os.kill(os.getpid(), signal.SIGSEGV)"))
+    assert not crashed.ok and "SIGSEGV" in crashed.detail and "host" in crashed.detail
+
+    refused = probe_cuda_provider(child("import sys; print('no CUDA provider here'); sys.exit(3)"))
+    assert (
+        not refused.ok
+        and "status 3" in refused.detail
+        and "no CUDA provider here" in refused.detail
+    )
+
+    hung = probe_cuda_provider(child("import time; time.sleep(30)"), timeout=0.5)
+    assert not hung.ok and "did not finish" in hung.detail
+
+    missing = probe_cuda_provider(["/nonexistent/python"])
+    assert not missing.ok and "could not be started" in missing.detail
+
+    assert probe_cuda_provider(child("print('ok')")).ok
+
+
+def test_onnx_cuda_backend_refuses_to_load_when_the_probe_fails(monkeypatch):
+    from pii_extract.backends import onnx_probe
+
+    calls = []
+
+    def failing_probe():
+        calls.append(1)
+        return onnx_probe.ProbeResult(False, "the CUDA probe process was killed by SIGSEGV")
+
+    monkeypatch.setattr(onnx_probe, "probe_cuda_provider", failing_probe)
+    backend = create_backend("onnx", onnx_provider="cuda")
+    with pytest.raises(
+        RuntimeError, match="not usable: the CUDA probe process was killed by SIGSEGV"
+    ):
+        backend.load()
+    assert calls == [1] and not backend.loaded
+
+
+def test_onnx_cpu_backend_never_runs_the_probe(monkeypatch):
+    from pii_extract.backends import onnx_probe
+
+    def unexpected():
+        raise AssertionError("the probe must not run for the cpu provider")
+
+    monkeypatch.setattr(onnx_probe, "probe_cuda_provider", unexpected)
+    backend = create_backend("onnx", model_id="/nonexistent/model-dir", onnx_provider="cpu")
+    with pytest.raises(Exception) as raised:  # the missing model, not the probe
+        backend.load()
+    assert not isinstance(raised.value, AssertionError)

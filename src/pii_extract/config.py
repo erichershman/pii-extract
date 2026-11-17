@@ -28,6 +28,7 @@ ENV_VARS: dict[str, str] = {
     "backend": "PII_BACKEND",
     "model": "GLINER_MODEL",
     "device": "PII_DEVICE",
+    "onnx_provider": "PII_ONNX_PROVIDER",
     "schema_pack": "PII_SCHEMA_PACK",
     "labels": "PII_LABELS",
     "validators": "PII_VALIDATORS",
@@ -46,9 +47,12 @@ ENV_VARS: dict[str, str] = {
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    backend: Literal["gliner2", "gliner"] = DEFAULT_BACKEND
+    backend: Literal["gliner2", "gliner", "onnx"] = DEFAULT_BACKEND
     model: str | None = Field(default=None, description="Model id; default depends on backend.")
     device: str = Field(default="auto", description="auto, cpu, cuda, cuda:0, ...")
+    onnx_provider: Literal["cpu", "cuda"] = Field(
+        default="cpu", description="ONNX Runtime execution provider (onnx backend only)."
+    )
     schema_pack: str = Field(default=DEFAULT_PACK, description="Label set and validators.")
     labels: tuple[str, ...] | None = Field(
         default=None, description="Entity types to detect; default: the schema pack's labels."
@@ -154,6 +158,7 @@ def build_pipeline(settings: Settings) -> Pipeline:
         settings.backend,
         model_id=settings.model,
         device=settings.device,
+        onnx_provider=settings.onnx_provider,
         batch_size=settings.batch_size,
     )
     return Pipeline(

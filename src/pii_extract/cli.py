@@ -65,9 +65,14 @@ def _add_common_options(parser: argparse.ArgumentParser) -> None:
 
     config = parser.add_argument_group("configuration (each overrides env, config file, defaults)")
     config.add_argument("--config", help="JSON config file (env: PII_CONFIG)")
-    config.add_argument("--backend", choices=["gliner2", "gliner"], help="env: PII_BACKEND")
+    config.add_argument("--backend", choices=["gliner2", "gliner", "onnx"], help="env: PII_BACKEND")
     config.add_argument("--model", help="model id (env: GLINER_MODEL)")
     config.add_argument("--device", help="auto, cpu, cuda, cuda:0 (env: PII_DEVICE)")
+    config.add_argument(
+        "--onnx-provider",
+        choices=["cpu", "cuda"],
+        help="execution provider for the onnx backend (env: PII_ONNX_PROVIDER; default cpu)",
+    )
     config.add_argument("--labels", help="comma-separated entity types (env: PII_LABELS)")
     config.add_argument("--schema-pack", help="label set and validators (env: PII_SCHEMA_PACK)")
     config.add_argument(
@@ -120,6 +125,7 @@ _SETTING_FLAGS = (
     "backend",
     "model",
     "device",
+    "onnx_provider",
     "labels",
     "schema_pack",
     "validators",

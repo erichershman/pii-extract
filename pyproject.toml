@@ -25,7 +25,10 @@ models = [
 # ONNX export and ONNX Runtime inference for the gliner backend.
 onnx = [
     "onnx>=1.17",
-    "onnxruntime>=1.20",
+    # The GPU wheel includes the CPU provider too. It is a CUDA 13 build: the
+    # cuda provider needs a CUDA 13 runtime and cuDNN 9 from the host, and
+    # cannot use the CUDA 12.8 libraries torch bundles (DESIGN.md, section 12).
+    "onnxruntime-gpu>=1.32",
     "onnxscript>=0.2",
 ]
 bench = [

@@ -15,7 +15,7 @@ text ─► tokenize ─► plan windows ─► predict (batched) ─► shift o
 Each stage lives in one module and does one thing. `pipeline.py` is the only
 file that knows the order, and it is short. The stages
 with no model in them (windowing, merging, redaction, offsets) are pure
-functions over plain data, which is why 266 of the 293 tests run without torch.
+functions over plain data, which is why 270 of the 298 tests run without torch.
 
 ## 1. One canonical span schema
 
@@ -532,8 +532,8 @@ Note the model card says "205M parameters" in prose while the weights file has
 
 | Layer | Count | Needs | What it covers |
 |---|---:|---|---|
-| `tests/unit` | 266 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
-| `tests/model` | 27 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
+| `tests/unit` | 270 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
+| `tests/model` | 28 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
 
 - **`FakeBackend`** is a regex "model" with a whitespace tokenizer and a
   configurable budget. It runs the real tokenize → window → shift → merge
@@ -553,35 +553,132 @@ Note the model card says "205M parameters" in prose while the weights file has
   quality, so the long-document test asserts emails for the default model only
   and phones for both.
 
-## 12. ONNX export and parity (urchade backend)
+## 12. ONNX backend (urchade model)
 
-`scripts/export_onnx.py` (`just export-onnx`) calls gliner's own
+**Export.** `scripts/export_onnx.py` (`just export-onnx`) calls gliner's own
 `export_to_onnx` (fp32, opset 19, no quantization) and writes a
 self-contained directory under `models/`: config, tokenizer and a 1.16 GB
 `model.onnx`. `models/` and `*.onnx` are gitignored; nothing exported is
 committed. Only the urchade model is exported: `gliner2` 2.1.0 has no export
 path.
 
-`tests/model/test_onnx_parity.py` (`just onnx-parity`) loads that directory
-with `load_onnx_model=True` and runs it through the same `GlinerBackend`
-adapter and `Pipeline` as the PyTorch model, so the comparison is made after
-span decoding, windowing and merging. It skips when the export or
-`onnxruntime` is missing.
+**Backend.** `OnnxBackend` (`PII_BACKEND=onnx`, model directory in
+`GLINER_MODEL`, default `models/gliner_multi_pii-v1-onnx`) subclasses
+`GlinerBackend` and overrides only loading. The word splitter, window budget,
+inference call and span decoder are the same code on both runtimes, which is
+what makes parity a meaningful check and keeps the backend small.
 
-| Check | Result |
+**The execution provider is explicit configuration:** `PII_ONNX_PROVIDER`
+(`--onnx-provider`), `cpu` or `cuda`, default `cpu`. The `device` setting does
+not affect it. An earlier draft tried CUDA first and fell back to CPU. That
+is the wrong design: the failure this project actually met was a segmentation
+fault during session creation, and a segfault cannot be caught in-process, so
+the "fallback" would never run and the service would die at startup. CUDA is
+used only when asked for, and asking for it without getting it raises.
+
+**Out-of-process probe.** With `provider=cuda`, before this process imports
+anything that touches CUDA, `backends/onnx_probe.py` starts a child process
+that creates a CUDA session for an embedded one-node model and runs it. The
+parent reads the exit status:
+
+| Child outcome | Result |
 |---|---|
-| Tolerance | labels and start/end offsets identical; scores within 1e-3 |
-| Tokenization and window budget | identical |
-| Four short fixtures (including BOM, NBSP, CRLF, a text with no PII) | identical spans |
-| Windowed long input: 8 windows, 137 window-level spans, 120 merged spans | identical spans, before and after merging |
-| Span mismatches | 0 |
-| Max score delta | 1.04e-04 |
+| exit 0 | proceed to load the real model on CUDA |
+| killed by a signal | `RuntimeError` naming the signal (for example SIGSEGV) and pointing at the host's driver or CUDA libraries |
+| build has no CUDA provider, or the session dropped it | `RuntimeError` with the child's message |
+| wrong result, timeout (120 s), or cannot start | `RuntimeError` saying which |
 
-What was compared: PyTorch on CUDA against ONNX Runtime 1.32 on its CPU
-execution provider (the `onnx` extra installs the CPU build). The score
-differences are therefore both runtime and device effects. Not yet measured:
-ONNX Runtime latency, the CUDA execution provider, and fp16 or int8 graphs.
-The ONNX model is not yet a selectable backend; the test wires it in by hand.
+The probe uses a tiny model on purpose: it exercises provider loading, the
+CUDA runtime, cuDNN and the driver in about a second, without loading 1.2 GB.
+It costs one extra process start per model load and nothing per request.
+After the real session is created the backend also checks the providers the
+session reports, because ONNX Runtime drops a provider it cannot initialise
+without raising. Unit tests drive the probe with children that segfault,
+exit non-zero, hang, and succeed.
+
+**Parity.** `tests/model/test_onnx_parity.py` (`just onnx-parity`, provider
+from `PII_ONNX_PROVIDER`) runs both runtimes through the same adapter and
+`Pipeline`, so the comparison is made after span decoding, windowing and
+merging. Fixtures: four short texts (including BOM, NBSP, CRLF, and one with
+no PII) and a long text split into 8 windows. Reference: PyTorch on CUDA.
+
+| | ONNX, CPU provider | ONNX, CUDA provider |
+|---|---|---|
+| Tokenization and window budget | identical | identical |
+| Span mismatches (146 window-level spans, 120 merged) | 0 | 0 |
+| Max score delta | 1.04e-04 | 4.41e-03 |
+| Median score delta | not recorded | 1.6e-04 |
+| Spans differing by more than 1e-03 | 0 | 26 |
+| Tolerance asserted by the test | 1e-3 | 1e-2 |
+
+The CUDA provider's scores differ from PyTorch's more than the CPU
+provider's do. The 26 larger differences are all `phone number` spans with
+mid-range scores (0.67 to 0.82), for example `555-233-1033` at 0.6753 against
+0.6797; no span was gained or lost. Batch size is not the cause (batch of 1
+gives the same picture), and PyTorch against itself across batch sizes
+differs by at most 6.8e-05. The cause inside the CUDA provider was not
+investigated. The practical consequence: a span whose score sits within
+about 0.005 of the threshold could be kept by one runtime and dropped by the
+other. None did on these fixtures. The test's CUDA tolerance is set to 1e-2
+to describe this observed behaviour, not because 1e-2 was the goal.
+
+For reference, ONNX on the CPU provider against PyTorch on CPU (three short
+fixtures) agreed to 4.23e-06, so the export itself is faithful.
+
+**Latency on the RTX 5080**, model only (`backend.predict`), mean and p95
+over 40 to 150 timed calls after warm-up, with `torch.cuda.synchronize()`
+around each call:
+
+| | PyTorch, CUDA | ONNX Runtime, CUDA |
+|---|---:|---:|
+| Batch 1, short text | 11.5 ms / 11.5 ms | 7.6 ms / 8.1 ms |
+| Batch 1, one 384-token window | 22.8 ms / 23.8 ms | 16.1 ms / 16.7 ms |
+| Batch 8, eight 384-token windows | 85.7 ms / 85.1 ms | 76.8 ms / 76.4 ms |
+
+On CPU, batch 1 on short fixtures: 51.4 ms / 59.5 ms for PyTorch against
+24.3 ms / 30.6 ms for ONNX Runtime. These are ad hoc measurements on
+synthetic fixtures, not part of `bench/`. ONNX Runtime is about a third
+faster at batch 1 on the GPU and about 10% faster at batch 8.
+
+**The host problem that shaped this design, now fixed.** The first attempts
+to use the CUDA provider segfaulted (exit 139). It was a host fault, not an
+ONNX Runtime or project bug:
+
+- The crash reproduced on a one-node model, without torch in the process, and
+  in a clean environment with matched CUDA 13 and cuDNN libraries, which
+  ruled out a conflict with torch's bundled CUDA 12.8 and a CUDA/cuDNN
+  mismatch.
+- `LD_DEBUG=libs` showed the last library loaded before the crash:
+  `/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1`, version 580.178.04,
+  from the Ubuntu package `libnvidia-compute-580`. That is a native Linux
+  driver package. Under WSL2 the driver is the Windows one (610.88), and its
+  own copy of that library sits in the driver store
+  (`/usr/lib/wsl/drivers/nv_dispig.inf_amd64_*/`), which is not on the
+  default library path, so the loader found the stale 580 copy and the
+  610.88 `libcuda` crashed calling into it.
+- PyTorch was unaffected because its cu128 wheels ship kernels precompiled
+  for the RTX 5080, so the driver never needed that library. That ONNX
+  Runtime needs it because its wheel lacks such kernels is likely but was not
+  verified.
+- **Fix: the native packages (`libnvidia-compute-535`, `libnvidia-compute-580`
+  and Ubuntu's CUDA 12.0 toolkit) were removed from the WSL distribution.**
+  With no code change, no preload and no library-path change, the CUDA
+  provider now loads and runs, and the results above were measured that way.
+  No workaround was ever added to the backend: papering over a broken driver
+  install in application code would have hidden it from every other CUDA
+  program on the machine.
+
+**Packaging facts.** `onnxruntime-gpu` 1.32 is a CUDA 13 build (it links
+`libcublas.so.13`). It includes the CPU provider, so the `onnx` extra uses it
+for both. For the CUDA provider it needs a CUDA 13 runtime and cuDNN 9 from
+the host; on the development machine those come from a system CUDA 13.2
+toolkit on `LD_LIBRARY_PATH`. It cannot use the CUDA 12.8 libraries torch
+bundles. The Docker image installs only the `models` extra, so it has no ONNX
+backend yet; its CUDA 12.8 base could not serve the CUDA provider anyway.
+`onnxruntime` and `onnxruntime-gpu` install into the same directory, and so
+do the cu12 and cu13 NVIDIA packages; switching between them in one
+environment can leave files missing, and the cure is a reinstall from the
+lockfile.
 
 ## Benchmark methodology
 
@@ -643,4 +740,4 @@ a general ranking.
 | App in `src/main.py` | `src/main.py` is a shim over `pii_extract/api.py` | So the API ships in the installed package (section 8) |
 | "Existing scaffold" carries over | Scaffold created from scratch to the spec's description | The repository held only the spec and `.gitignore` |
 | Schema packs, validators, Luhn | Built (section 7); validators are off by default | A validator can only remove detections, which is the wrong default for a redactor |
-| ONNX export | Export script and parity test for the urchade model (section 12); no ONNX backend yet | GLiNER2 has no export path in `gliner2` 2.1.0 |
+| ONNX export | Export script, `OnnxBackend` with CPU and CUDA providers, and a parity test for the urchade model (section 12) | GLiNER2 has no export path in `gliner2` 2.1.0 |

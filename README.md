@@ -1,5 +1,7 @@
 # pii-extract
 
+[![CI](https://github.com/erichershman/pii-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/erichershman/pii-extract/actions/workflows/ci.yml)
+
 PII detection and redaction built on GLiNER-family zero-shot NER. It ships as a
 Python library, a CLI, and a containerized GPU inference service.
 
@@ -18,6 +20,11 @@ What it does:
   documented merge rule for detections that repeat or disagree across windows.
 - **Redacts** with a pluggable strategy: `mask`, salted `hash`, or typed
   `placeholder` (`[PHONE_1]`, numbered consistently per unique value).
+- **Fails closed when redacting**: every character any window flagged is
+  replaced, even where detections disagree about boundaries or labels.
+- **Schema packs**: named label sets with optional validators (regex shape
+  checks for email, SSN and phone; a Luhn check for card numbers) that can be
+  switched on per deployment or per request.
 - **Swaps models** behind a small backend protocol: GLiNER2-PII by default,
   `urchade/gliner_multi_pii-v1` as the comparison backend.
 
@@ -30,8 +37,8 @@ The environment is pinned by `uv.lock`.
 
 ```bash
 just setup          # .venv with torch (CUDA 12.8 wheels), gliner2, gliner, dev tools
-just unit           # 165 pure-logic tests, no model needed (under a second)
-just model-tests    # 19 tests on real weights (downloads ~1.5 GB on first run)
+just unit           # 258 pure-logic tests, no model needed (under a second)
+just model-tests    # 21 tests on real weights (downloads ~1.5 GB on first run)
 ```
 
 ### Service
@@ -88,8 +95,9 @@ The other strategies, on the first sentence:
 | `mask` | `Contact ******** at ******************** or ************.` |
 | `hash` | `Contact [PERSON:478703faadf6] at [EMAIL:904f913ef55b] or [PHONE:c947c54d2985].` |
 
-Request fields: `text` (required), `labels` and `threshold` (optional, fall back
-to server defaults), and for `/redact` also `strategy` and `mask_char`.
+Request fields: `text` (required); `labels`, `threshold` and `validate`
+(optional, fall back to server settings); and for `/redact` also `strategy`
+and `mask_char`.
 Interactive docs are at `/docs`.
 
 Offsets are Unicode code points (Python `str` indices), half-open, and satisfy
@@ -127,11 +135,13 @@ names below.
 | `backend` | `PII_BACKEND` | `--backend` | `gliner2` (or `gliner`) |
 | `model` | `GLINER_MODEL` | `--model` | the backend's default model |
 | `device` | `PII_DEVICE` | `--device` | `auto` (CUDA if available, else CPU) |
-| `labels` | `PII_LABELS` (comma-separated) | `--labels` | `person, email, phone number, credit card number, ssn` |
+| `schema_pack` | `PII_SCHEMA_PACK` | `--schema-pack` | `pii` (or `pii-extended`) |
+| `labels` | `PII_LABELS` (comma-separated) | `--labels` | the schema pack's labels |
+| `validators` | `PII_VALIDATORS` | `--validators` | `off` (or `on`, or a comma-separated list of labels) |
 | `threshold` | `PII_THRESHOLD` | `--threshold` | `0.5` |
 | `window_tokens` | `PII_WINDOW_TOKENS` | `--window-tokens` | the model's limit |
 | `overlap_tokens` | `PII_OVERLAP_TOKENS` | `--overlap-tokens` | `64` |
-| `iou_threshold` | `PII_IOU_THRESHOLD` | `--iou-threshold` | `0.5` |
+| `iou_threshold` (extraction only) | `PII_IOU_THRESHOLD` | `--iou-threshold` | `0.5` |
 | `batch_size` | `PII_BATCH_SIZE` | `--batch-size` | `8` |
 | `strategy` | `PII_REDACTION_STRATEGY` | `--strategy` | `placeholder` |
 | `hash_salt` | `PII_HASH_SALT` | `--hash-salt` | random per request |
@@ -141,6 +151,67 @@ names below.
 Set `PII_HASH_SALT` to a secret if `hash` redactions must be stable across
 requests. Without it each request gets a fresh random salt, so digests are
 consistent within a document but cannot be linked across documents.
+
+## Schema packs and validators
+
+A schema pack is a label set plus optional per-label validators.
+
+| Pack | Labels | Validators |
+|---|---|---|
+| `pii` (default) | person, email, phone number, credit card number, ssn | email, phone number, credit card number, ssn |
+| `pii-extended` | the above plus date of birth, ip address, medical record number | the above plus ip address |
+
+| Validator | Passes when |
+|---|---|
+| email | the text is one well-formed address |
+| phone number | only phone characters, 7 to 15 digits, optional extension |
+| ssn | nine digits grouped 3-2-4 with consistent separators (US shape; allocation rules are not enforced) |
+| credit card number | 12 to 19 digits, optionally grouped, passing the Luhn checksum |
+| ip address | a valid IPv4 or IPv6 address |
+
+A span whose label has an enabled validator is dropped if its text fails the
+check. Labels are matched loosely (`phone_number`, `Phone Number` and
+`telephone number` all reach the phone validator), and labels without a
+validator are never filtered. Validators run after windows are merged, so
+they see whole entities.
+
+**Validators are off by default.** Switch them on per deployment or per request:
+
+```bash
+PII_VALIDATORS=on just serve                        # all validators
+PII_VALIDATORS="ssn,credit card number" just serve  # only these labels
+uv run pii-extract extract --validators on "Card 4111 1111 1111 1112"   # fails Luhn: dropped
+curl -s -X POST http://localhost:8000/extract -H 'Content-Type: application/json' \
+  -d '{"text": "Card 4111 1111 1111 1112", "validate": true}'
+```
+
+`"validate": true` runs every validator in the pack, `false` none; omitting it
+uses the server setting. `/healthz` reports the pack and the validators in force.
+
+### Why the defaults favor recall
+
+The two kinds of error are not equally bad for a redactor. **A missed span is
+a leak: the PII leaves in the output. An extra span is over-redaction: some
+harmless text is replaced.** The first cannot be undone downstream; the second
+costs a little readability. So every default leans toward flagging more:
+
+| Default | Why |
+|---|---|
+| GLiNER2-PII as the model | Highest recall of the two (0.93 vs 0.88 below), at lower precision |
+| Validators off | A validator can only remove detections, and a malformed value is often still sensitive (a card number with one wrong digit fails Luhn). On the benchmark, validators cut `ssn` recall from 0.92 to 0.53 |
+| Redaction covers the union | Where detections disagree on boundaries or labels, `/redact` replaces every flagged character |
+| Overlapping windows | An entity cut by one window is seen whole by the next |
+
+If you are extracting entities for analytics rather than redacting, the
+trade-off reverses: turn validators on, and consider the comparison backend.
+
+### `/extract` and `/redact` merge differently
+
+When two detections of the same entity overlap, `/extract` keeps the more
+confident one's boundaries, while `/redact` covers the union. For
+`Jane Doe` (0.95) and `Jane Doe Smith` (0.60), `/extract` returns `Jane Doe`
+and `/redact` replaces `Jane Doe Smith`. The spans in a `/redact` response can
+therefore be wider than `/extract`'s for the same text.
 
 ## Benchmark
 
@@ -167,12 +238,48 @@ Latency per request through the full pipeline, one request at a time, after warm
 
 | Model | Input | Mean | p50 | p95 | Windows |
 |---|---|---:|---:|---:|---:|
-| `fastino/gliner2-privacy-filter-PII-multi` | single documents (median 188 chars) | 12.8 ms | 12.5 ms | 15.3 ms | 1.0 |
-| `urchade/gliner_multi_pii-v1` | single documents (median 188 chars) | 15.5 ms | 15.1 ms | 19.5 ms | 1.0 |
-| `fastino/gliner2-privacy-filter-PII-multi` | 25 documents joined (median 5,544 chars) | 74.3 ms | 71.6 ms | 84.8 ms | 5.3 |
-| `urchade/gliner_multi_pii-v1` | 25 documents joined (median 5,544 chars) | 84.4 ms | 84.1 ms | 100.5 ms | 6.5 |
+| `fastino/gliner2-privacy-filter-PII-multi` | single documents (median 188 chars) | 13.9 ms | 13.6 ms | 16.8 ms | 1.0 |
+| `urchade/gliner_multi_pii-v1` | single documents (median 188 chars) | 16.0 ms | 15.5 ms | 20.8 ms | 1.0 |
+| `fastino/gliner2-privacy-filter-PII-multi` | 25 documents joined (median 5,544 chars) | 85.3 ms | 72.7 ms | 179.2 ms | 5.3 |
+| `urchade/gliner_multi_pii-v1` | 25 documents joined (median 5,544 chars) | 105.6 ms | 86.7 ms | 202.1 ms | 6.5 |
 
-So: **~13 ms per request on an RTX 5080** for a short document with the default model.
+So: **~14 ms per request on an RTX 5080** for a short document with the
+default model. The joined run has only 20 texts, so its p95 is close to its
+maximum and varies between runs.
+
+### Validators and an extra label
+
+`just bench --ablation` reruns the same 500 documents four ways. `ssn` and the
+micro average are scored on the same seven labels in every row, precision /
+recall / F1:
+
+| Model | Variant | ssn | Micro average (7 labels) |
+|---|---|---|---|
+| GLiNER2-PII | baseline | 0.442 / 0.919 / 0.597 | 0.657 / 0.929 / 0.770 |
+| GLiNER2-PII | validators on | 0.955 / 0.528 / 0.680 | 0.759 / 0.844 / 0.800 |
+| GLiNER2-PII | + medical record number | 0.738 / 0.894 / 0.809 | 0.739 / 0.920 / **0.819** |
+| GLiNER2-PII | validators on + medical record number | 0.964 / 0.503 / 0.661 | 0.769 / 0.835 / 0.801 |
+| urchade | baseline | 0.959 / 0.876 / 0.916 | 0.774 / 0.878 / **0.823** |
+| urchade | validators on | 0.976 / 0.503 / 0.664 | 0.772 / 0.799 / 0.785 |
+| urchade | + medical record number | 0.953 / 0.876 / 0.913 | 0.774 / 0.880 / 0.823 |
+| urchade | validators on + medical record number | 0.976 / 0.503 / 0.664 | 0.773 / 0.801 / 0.787 |
+
+- **Giving GLiNER2-PII the right label fixes most of its `ssn` problem without
+  costing recall.** With "medical record number" offered, `ssn` precision goes
+  from 0.44 to 0.74, recall from 0.92 to 0.89, and overall F1 from 0.770 to
+  0.819, level with urchade's 0.823. The new label itself scores
+  0.869 / 0.863 / 0.866 for GLiNER2-PII and 0.930 / 0.750 / 0.830 for urchade
+  (284 gold spans). urchade is unchanged: it was not confusing the two.
+- **Validators buy precision with recall.** `ssn` precision reaches 0.96 for
+  GLiNER2-PII, but `ssn` recall falls from 0.92 to 0.53 for both models.
+  The cause is the data, not a bug: only 94 of the 162 `ssn` annotations in
+  the sample have the US 3-2-4 shape. The rest are nine digits in groups of
+  three or UK National Insurance style (`AA 99 99 99 A`), which a US-shape
+  check rejects. Overall F1 rises for GLiNER2-PII (0.770 to 0.800) because it
+  had many false positives to remove, and falls for urchade (0.823 to 0.785)
+  because it had few.
+- For redaction, the extra-label route is the better one: it is the only
+  variant that raises precision while holding recall at 0.92.
 
 How to read this:
 
@@ -198,7 +305,8 @@ How to read this:
   reconstructed by locating each annotated string in the text (the dataset has
   no offsets); see [DESIGN.md](DESIGN.md#benchmark-methodology).
 
-Reproduce with `just bench` and `just bench --concat 25`.
+Reproduce with `just bench`, `just bench --concat 25` and `just bench --ablation`.
+Other switches: `--validators on` and `--extra-labels "medical record number"`.
 
 ## How it works
 
@@ -216,6 +324,7 @@ Each stage is its own module under `src/pii_extract/`:
 | `chunking.py` | Sliding windows over token offsets (pure arithmetic) |
 | `backends/` | Backend protocol, per-instance model session, GLiNER2 and GLiNER adapters |
 | `dedup.py` | The only place spans are deduplicated or overlap is resolved |
+| `schema.py` | Schema packs: label sets and per-label validators |
 | `redaction.py` | `mask`, `hash`, `placeholder` strategies and the splice |
 | `pipeline.py` | Wires the stages together |
 | `config.py`, `api.py`, `cli.py` | Settings precedence, FastAPI service, CLI |

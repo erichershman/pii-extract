@@ -4,57 +4,49 @@ Remaining work, in priority order. Each item says where the change goes and
 how to know it is done, so a later session can start without rediscovery.
 Background for every decision referenced here is in [DESIGN.md](DESIGN.md).
 
-State at the end of the first session: the core pipeline, both backends, the
-API, CLI, container, CI workflow, and a first benchmark are working and
-tested (165 pure-logic tests, 19 model tests). Nothing has been pushed; the
-repository has no remote yet, so the GitHub Actions workflow has not run on
-GitHub. It was exercised locally by installing the torch-free environment
-from the lockfile and running the same three commands.
+State: the core pipeline, both backends, schema packs with validators, the
+API, CLI, container, CI workflow, and a benchmark with an ablation mode are
+working and tested (258 pure-logic tests, 21 model tests). The repository is
+on GitHub and the Actions workflow passes there.
 
-## 1. Close the remaining redaction gaps
+Done since the first version of this list: cross-label conflicts are
+fail-closed (the winner absorbs the loser), redaction covers the union of
+everything flagged, and schema packs with validators exist.
 
-These affect whether PII can slip through, so they come first.
+## 1. Detection quality for redaction
 
-**1a. Make cross-label conflicts fail closed.**
-Today, when two spans with different labels partially overlap, the loser is
-dropped whole and its non-overlapping characters are not redacted
-(DESIGN.md, section 4, "Known limitation").
-- Change `_resolve_label_conflicts` in `src/pii_extract/dedup.py` to trim the
-  loser to the part outside the winner instead of dropping it. If the winner
-  sits strictly inside the loser, that yields two remainders.
-- Strip whitespace from the trimmed edges and drop a remainder that is empty.
-- Decide what score a remainder carries (the loser's score is the simple
-  choice) and document it in the module docstring.
-- Tests in `tests/unit/test_dedup.py`: partial overlap left, partial overlap
-  right, winner inside loser, loser inside winner (still dropped). The
-  existing randomized test already asserts the output is flat; add an
-  assertion that every character covered by an unclipped input candidate is
-  covered by some output span.
+**1a. Offer the models more identifier labels by default.**
+The ablation shows that adding "medical record number" raises GLiNER2-PII's
+`ssn` precision from 0.44 to 0.74 and overall F1 from 0.770 to 0.819 without
+costing recall. `pii-extended` already carries that label. Decide whether it
+should be the default pack, and test `customer id` and `employee id` the same
+way (`just bench --extra-labels "customer id" "employee id"`).
 
-**1b. Schema packs (spec Stage 2, not started).**
-A schema pack is a label set plus optional per-label post-processors.
-- New module `src/pii_extract/schema.py`: `SchemaPack(name, labels, validators,
-  native_labels)`, where `validators: dict[label, Callable[[str], bool]]` and
-  `native_labels: dict[backend_name, dict[label, str]]`.
-- Validators to ship: email regex, US SSN shape, phone digit count, and a Luhn
-  checksum for card numbers.
-- Decide the policy for a failed validation, and make it a setting. For
-  extraction, dropping the span raises precision. For redaction, dropping is
-  unsafe (a mistyped card number is still sensitive), so the safe option is to
-  keep the span and relabel or flag it.
-- Apply packs in `Pipeline.extract` after `merge_spans`.
-- Add a **regex backstop**: patterns that are cheap and near-certain (emails,
-  Luhn-valid card numbers) can be injected as candidates with score 1.0 before
-  the merge, so the merge rules decide how they combine with model output.
-  Benchmark recall for `credit card number` is 0.86 for the default model, so
-  there is room to gain.
-- `native_labels` exists because GLiNER2-PII was trained on 42 specific labels
-  (`phone_number`, `card_number`, `national_id_number`, ...; listed on its
-  model card) and the pipeline currently sends free-text labels such as
-  `phone number`. Map canonical labels to each backend's vocabulary, map the
-  results back, and measure the difference with `just bench`.
+**1b. Native label vocabularies.**
+GLiNER2-PII was trained on 42 specific labels (`phone_number`, `card_number`,
+`national_id_number`, ...; listed on its model card) and the pipeline sends
+free-text labels. Add `native_labels: dict[backend_name, dict[label, str]]` to
+`SchemaPack`, map on the way into `backend.predict` and back on the way out,
+and measure with `just bench`.
 
-**1c. Tighten the "clipped" test.**
+**1c. Regex backstop.**
+Patterns that are cheap and near-certain (emails, Luhn-valid card numbers)
+can be injected as candidates with score 1.0 before the merge, so the merge
+rules decide how they combine with model output. Benchmark recall for
+`credit card number` is 0.86 for the default model. The validators in
+`src/pii_extract/schema.py` are the starting point.
+
+**1d. A "relabel" validation policy.**
+Today a span that fails validation is dropped. An alternative that keeps
+coverage: relabel it to a generic type instead. It needs a decision on the
+label name and on how placeholders render it.
+
+**1e. International formats.**
+The `ssn` validator is US-shape only, and 68 of 162 gold SSNs in the
+benchmark sample are other national formats. Either add per-country
+validators or rename the label so the scope is honest.
+
+**1f. Tighten the "clipped" test.**
 A fragment that stops short of the window edge is not marked clipped
 (DESIGN.md, section 4). Consider treating a span as clipped when it ends
 within one token of a cut edge. `_touches_cut_edge` in
@@ -87,7 +79,7 @@ Spec Stage 1 defers this and the target summary names ONNX Runtime.
 
 ## 3. Performance
 
-Current numbers: about 13 ms per short request and about 18 ms per window on
+Current numbers: about 14 ms per short request and about 18 ms per window on
 long documents (RTX 5080, default model, batch size 8).
 
 1. **Measure under load first.** Nothing has been measured with concurrent
@@ -122,8 +114,7 @@ The current result is one dataset, one seed, 500 documents, one threshold.
    - `nvidia/gliner-PII` (NVIDIA Open Model License, **not** Apache). Fine to
      benchmark; read the terms before redistributing weights or shipping it
      as a default, and keep it out of the README's provenance line.
-2. **Native labels.** Rerun with each model's own label vocabulary once
-   schema packs exist (item 1b). The current table uses identical free-text
+2. **Native labels.** Rerun with each model's own label vocabulary (item 1b). The current table uses identical free-text
    prompts for both models, which likely understates GLiNER2-PII.
 3. **Threshold sweep.** `--threshold` exists; add a sweep that prints
    precision and recall per label at several thresholds, and choose defaults
@@ -143,8 +134,7 @@ The current result is one dataset, one seed, 500 documents, one threshold.
 
 ## 5. README and repository polish
 
-1. **Push to GitHub** and confirm the Actions workflow passes there, then add
-   a CI badge.
+1. Done: pushed to GitHub, workflow passing, CI badge in the README.
 2. **Demo GIF** (spec Stage 3): record `just test` and a `pii-extract redact`
    call with `vhs` or asciinema, using only the synthetic example text.
 3. **Build the Docker image in CI** (the spec's stretch goal). The build needs

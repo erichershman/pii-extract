@@ -8,14 +8,14 @@ on the development machine (RTX 5080, torch 2.11.0+cu128, `gliner2` 2.1.0,
 ## The pipeline
 
 ```
-text ─► tokenize ─► plan windows ─► predict (batched) ─► shift offsets ─► merge ─► spans ─► redact
-        backend      chunking.py     backend              pipeline.py      dedup.py          redaction.py
+text ─► tokenize ─► plan windows ─► predict (batched) ─► shift offsets ─► merge ─► validate ─► spans ─► redact
+        backend      chunking.py     backend              pipeline.py      dedup.py  schema.py           redaction.py
 ```
 
 Each stage lives in one module and does one thing. `pipeline.py` is the only
 file that knows the order, and it is short. The stages
 with no model in them (windowing, merging, redaction, offsets) are pure
-functions over plain data, which is why 165 of the 184 tests run without torch.
+functions over plain data, which is why 258 of the 279 tests run without torch.
 
 ## 1. One canonical span schema
 
@@ -394,7 +394,65 @@ builds a fresh one per request, so `[PHONE_1]` in two responses are unrelated.
 Reusing one instance across documents (library use) keeps numbering consistent
 across them; a test covers both.
 
-## 7. Service, configuration, CLI
+## 7. Schema packs and validators
+
+**Decision.** A `SchemaPack` is a name, a label tuple, a map from label to
+validator, and an alias table. Two ship: `pii` (the five default labels) and
+`pii-extended` (adds date of birth, ip address, medical record number). The
+pipeline takes its default labels from the pack, and explicit `labels`
+override them.
+
+**A validator is a predicate on the detected text** (`Callable[[str], bool]`).
+The spec says "post-processors"; validators are the only kind that exists, so
+that is the type. When a transforming post-processor appears (trimming a
+trailing comma, say), the type widens then.
+
+| Validator | Rule | Deliberately not checked |
+|---|---|---|
+| email | regex for one well-formed address | deliverability |
+| phone number | phone characters only, 7 to 15 digits (15 is the E.164 limit), optional extension | country-specific plans |
+| ssn | `\d{3}[- ]?\d{2}[- ]?\d{4}` with the same separator twice | SSA allocation rules: synthetic fixtures use the reserved ranges (000, 9xx) on purpose, and 9xx numbers are ITINs, which are just as sensitive |
+| credit card number | 12 to 19 digits, spaces or hyphens allowed, Luhn checksum | issuer prefixes |
+| ip address | parses with the standard library | |
+
+Validators tolerate a trailing comma or full stop, so a sloppy span boundary
+is not mistaken for a wrong detection.
+
+**Labels are matched by normalized form plus aliases.** The models are
+zero-shot, so callers write `phone_number`, `Phone Number` or
+`telephone number`. Labels are case-folded with separators collapsed, then
+looked up in an alias table, so all three reach the phone validator. A label
+with no validator is never filtered.
+
+**Validators run after the merge**, on final spans. Before the merge they
+would see window fragments: `4111 1111` fails Luhn, would be dropped, and
+could no longer mark the full number's rival as a fragment or be unioned into
+it. A test covers a card cut by a window boundary with validators on.
+
+**Off by default, and why.** A validator can only remove a detection. A value
+that fails its check is often still sensitive (one mistyped digit breaks
+Luhn), and real data does not follow one country's formats. The benchmark
+shows the size of the effect: with validators on, `ssn` precision for
+GLiNER2-PII rises from 0.44 to 0.96 and `ssn` recall falls from 0.92 to 0.53,
+because only 94 of 162 gold SSNs in the sample have the US shape. For a
+redactor a missed span is a leak and an extra span is over-redaction, so
+dropping detections has to be something the operator chooses.
+
+**Switches.** `validators` in settings is `off`, `on`/`all`, or a list of
+labels (`PII_VALIDATORS`, `--validators`), resolved against the pack at
+startup so a typo is a configuration error. A request can override with
+`"validate": true|false`. `/healthz` reports what is in force.
+
+**Alternatives.**
+- *Relabel instead of drop* (a failed `ssn` becomes a generic `identifier`).
+  Keeps coverage, but invents a label the caller did not ask for. Worth
+  revisiting; see NEXT_STEPS.
+- *Validators as extra detectors* (regex finds emails the model missed). A
+  different feature (a recall backstop), also in NEXT_STEPS.
+- *Packs loaded from JSON.* Label sets could be, validators cannot; `labels`
+  in settings already covers custom label sets.
+
+## 8. Service, configuration, CLI
 
 - **One pipeline per app.** `create_app(settings, pipeline)` stores it on
   `app.state`. Tests build many apps, each with its own fake backend, and one
@@ -424,7 +482,7 @@ across them; a test covers both.
 - **CLI.** `argparse`, no extra dependency. Input from an argument, `--file`,
   or stdin; JSON out. The model is closed in a `finally`.
 
-## 8. The default model's name
+## 9. The default model's name
 
 The spec names `fastino/gliner2-pii-v1`. No repository with that id exists on
 the Hugging Face Hub (the API returns 401 and `from_pretrained` raises
@@ -444,7 +502,7 @@ line verbatim and adds one sentence explaining the name.
 Note the model card says "205M parameters" in prose while the weights file has
 307M; the spec's "about 0.3B" matches the weights.
 
-## 9. Environment and packaging
+## 10. Environment and packaging
 
 - **uv with a lockfile.** `uv.lock` pins every package; `just setup` and the
   Docker build both use `--frozen`. Chosen over `venv` plus `requirements.txt`
@@ -461,12 +519,12 @@ Note the model card says "205M parameters" in prose while the weights file has
   runs as a non-root user and keeps weights in a named volume at `HF_HOME`.
   It is about 12 GB, almost all of it torch and the CUDA libraries.
 
-## 10. Testing strategy
+## 11. Testing strategy
 
 | Layer | Count | Needs | What it covers |
 |---|---:|---|---|
-| `tests/unit` | 165 | nothing | spans, windowing, merging, redaction, offsets end to end, adapters, sessions, config, API, CLI, benchmark scoring |
-| `tests/model` | 19 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
+| `tests/unit` | 258 | nothing | spans, windowing, merging, redaction, offsets end to end, schema packs and validators, adapters, sessions, config, API, CLI, benchmark scoring |
+| `tests/model` | 21 | weights | both real models: detection, token alignment, window budget, offset round trip, an entity cut by a window boundary, concurrency, close and reload |
 
 - **`FakeBackend`** is a regex "model" with a whitespace tokenizer and a
   configurable budget. It runs the real tokenize → window → shift → merge
@@ -478,7 +536,8 @@ Note the model card says "205M parameters" in prose while the weights file has
 - **Model tests** carry the `model` marker (added automatically to everything
   under `tests/model`) and skip themselves when torch or the weights are
   missing. CI runs `-m "not model"`. Verified in a clean environment without
-  torch: 165 passed, 19 skipped.
+  torch (at the end of the first session: 165 passed, 19 skipped), and the
+  same workflow now passes on GitHub Actions.
 - Model tests assert **pipeline properties**, and assert exact model output
   only where the model is reliable. For example, urchade tags the local part
   of `agent10@example.com` as a person in some contexts; that is model
@@ -511,6 +570,17 @@ API uses, so latency includes tokenizing, windowing, and merging.
   offsets, because every dataset document fits in a single window and the
   windowing path would otherwise go unmeasured.
 
+- **Ablation.** `--ablation` runs four variants per backend on one loaded
+  model: baseline, validators on, an extra "medical record number" label, and
+  both. The label table is built by `label_table()`, so an extra label adds
+  both a prompt and the matching gold spans. The summary scores `ssn` and the
+  micro average on the base seven labels in every variant, so rows are
+  comparable; predictions under the extra label are scored separately.
+  Result: the extra label lifts GLiNER2-PII's `ssn` precision from 0.44 to
+  0.74 and its overall F1 from 0.770 to 0.819 with recall at 0.92; validators
+  lift overall F1 to 0.800 but drop recall to 0.84. urchade is unchanged by
+  the label and loses F1 (0.823 to 0.785) with validators.
+
 Limits of the result: one dataset, one seed, 500 documents, one threshold,
 untuned prompts, and reconstructed gold. The dataset contains many identifier
 types outside the seven scored labels, which counts against a model that tags
@@ -522,8 +592,8 @@ a general ranking.
 
 | Spec | What was done | Why |
 |---|---|---|
-| Default model `fastino/gliner2-pii-v1` | Default is `fastino/gliner2-privacy-filter-PII-multi`; the spec's name is an alias | The spec's id does not exist on the Hub (section 8) |
-| App in `src/main.py` | `src/main.py` is a shim over `pii_extract/api.py` | So the API ships in the installed package (section 7) |
+| Default model `fastino/gliner2-pii-v1` | Default is `fastino/gliner2-privacy-filter-PII-multi`; the spec's name is an alias | The spec's id does not exist on the Hub (section 9) |
+| App in `src/main.py` | `src/main.py` is a shim over `pii_extract/api.py` | So the API ships in the installed package (section 8) |
 | "Existing scaffold" carries over | Scaffold created from scratch to the spec's description | The repository held only the spec and `.gitignore` |
-| Schema packs, validators, Luhn | Not built | Outside this session's scope; first item in NEXT_STEPS |
+| Schema packs, validators, Luhn | Built (section 7); validators are off by default | A validator can only remove detections, which is the wrong default for a redactor |
 | ONNX export | Not built | Explicitly out of scope for this session |

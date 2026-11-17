@@ -187,3 +187,29 @@ def test_text_without_final_punctuation_keeps_offsets_in_range(backend):
         assert spans, f"expected a detection in {text!r}"
         assert all(s.end <= len(text) for s in spans)
         assert not any(s.text.endswith(".") for s in spans)
+
+
+def test_validators_drop_only_malformed_detections(backend):
+    # 4111 1111 1111 1112 has a card's shape but fails the Luhn check.
+    text = (
+        "Primary card 4111 1111 1111 1111, backup card 4111 1111 1111 1112. "
+        "Contact Jane Doe at jane.doe@example.com or 555-867-5309."
+    )
+    off = Pipeline(backend, labels=LABELS)
+    on = Pipeline(backend, labels=LABELS, validators=["all"])
+
+    unchecked = by_label(off.extract(text))
+    checked = by_label(on.extract(text))
+
+    # Whatever card numbers the model reported, only the Luhn-valid one survives.
+    # (urchade/gliner_multi_pii-v1 reports neither card in this sentence.)
+    assert "4111 1111 1111 1112" not in checked.get("credit card number", [])
+    if backend.name == "gliner2":
+        assert unchecked["credit card number"] == ["4111 1111 1111 1111", "4111 1111 1111 1112"]
+        assert checked["credit card number"] == ["4111 1111 1111 1111"]
+    assert checked["email"] == unchecked["email"] == ["jane.doe@example.com"]
+    assert checked["phone number"] == unchecked["phone number"] == ["555-867-5309"]
+    assert checked["person"] == unchecked["person"], "labels without a validator are untouched"
+    # Per-call switches override the configured default in both directions.
+    assert by_label(off.extract(text, validate=True)) == checked
+    assert by_label(on.extract(text, validate=False)) == unchecked

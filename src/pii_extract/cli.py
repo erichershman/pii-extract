@@ -69,6 +69,13 @@ def _add_common_options(parser: argparse.ArgumentParser) -> None:
     config.add_argument("--model", help="model id (env: GLINER_MODEL)")
     config.add_argument("--device", help="auto, cpu, cuda, cuda:0 (env: PII_DEVICE)")
     config.add_argument("--labels", help="comma-separated entity types (env: PII_LABELS)")
+    config.add_argument("--schema-pack", help="label set and validators (env: PII_SCHEMA_PACK)")
+    config.add_argument(
+        "--validators",
+        metavar="on|off|LABELS",
+        help="drop entities that fail their format check: on, off, or a comma-separated "
+        "list of labels to validate (env: PII_VALIDATORS; default off)",
+    )
     config.add_argument("--threshold", type=float, help="minimum confidence (env: PII_THRESHOLD)")
     config.add_argument(
         "--window-tokens", type=int, help="window size cap (env: PII_WINDOW_TOKENS)"
@@ -114,6 +121,8 @@ _SETTING_FLAGS = (
     "model",
     "device",
     "labels",
+    "schema_pack",
+    "validators",
     "threshold",
     "window_tokens",
     "overlap_tokens",

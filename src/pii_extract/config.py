@@ -12,17 +12,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pii_extract.backends import DEFAULT_BACKEND, create_backend
 from pii_extract.dedup import DEFAULT_IOU_THRESHOLD
-from pii_extract.pipeline import (
-    DEFAULT_LABELS,
-    DEFAULT_OVERLAP_TOKENS,
-    DEFAULT_THRESHOLD,
-    Pipeline,
-)
+from pii_extract.pipeline import DEFAULT_OVERLAP_TOKENS, DEFAULT_THRESHOLD, Pipeline
 from pii_extract.redaction import STRATEGIES, RedactionStrategy, make_strategy
+from pii_extract.schema import DEFAULT_PACK, get_pack
 
 CONFIG_FILE_ENV = "PII_CONFIG"
 
@@ -32,7 +28,9 @@ ENV_VARS: dict[str, str] = {
     "backend": "PII_BACKEND",
     "model": "GLINER_MODEL",
     "device": "PII_DEVICE",
+    "schema_pack": "PII_SCHEMA_PACK",
     "labels": "PII_LABELS",
+    "validators": "PII_VALIDATORS",
     "threshold": "PII_THRESHOLD",
     "window_tokens": "PII_WINDOW_TOKENS",
     "overlap_tokens": "PII_OVERLAP_TOKENS",
@@ -51,7 +49,14 @@ class Settings(BaseModel):
     backend: Literal["gliner2", "gliner"] = DEFAULT_BACKEND
     model: str | None = Field(default=None, description="Model id; default depends on backend.")
     device: str = Field(default="auto", description="auto, cpu, cuda, cuda:0, ...")
-    labels: tuple[str, ...] = DEFAULT_LABELS
+    schema_pack: str = Field(default=DEFAULT_PACK, description="Label set and validators.")
+    labels: tuple[str, ...] | None = Field(
+        default=None, description="Entity types to detect; default: the schema pack's labels."
+    )
+    validators: tuple[str, ...] = Field(
+        default=(),
+        description="Validators to run: off (default), on/all, or a list of labels.",
+    )
     threshold: float = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     window_tokens: int | None = Field(
         default=None, gt=0, description="Cap on window size; the model's own limit still applies."
@@ -75,6 +80,27 @@ class Settings(BaseModel):
             if not value:
                 raise ValueError("at least one label is required")
         return value
+
+    @field_validator("validators", mode="before")
+    @classmethod
+    def _parse_validators(cls, value: Any) -> Any:
+        """``on``/``all``/``true`` -> every validator; ``off``/``none``/``false`` -> none;
+        anything else is a comma-separated list of labels to validate."""
+        if isinstance(value, bool):
+            return ("all",) if value else ()
+        if isinstance(value, str):
+            switch = value.strip().casefold()
+            if switch in {"on", "all", "true", "yes", "1"}:
+                return ("all",)
+            if switch in {"off", "none", "false", "no", "0", ""}:
+                return ()
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _check_schema(self) -> Settings:
+        get_pack(self.schema_pack).select(self.validators)  # raises on unknown names
+        return self
 
     @field_validator("strategy")
     @classmethod
@@ -133,6 +159,8 @@ def build_pipeline(settings: Settings) -> Pipeline:
     return Pipeline(
         backend,
         labels=settings.labels,
+        schema=get_pack(settings.schema_pack),
+        validators=settings.validators,
         threshold=settings.threshold,
         window_tokens=settings.window_tokens,
         overlap_tokens=settings.overlap_tokens,

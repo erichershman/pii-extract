@@ -46,6 +46,12 @@ class ExtractRequest(BaseModel):
     threshold: float | None = Field(
         default=None, ge=0.0, le=1.0, description="Minimum confidence. Omit for the default."
     )
+    validate_entities: bool | None = Field(
+        default=None,
+        alias="validate",
+        description="Run the schema pack's validators (regex shape checks, Luhn) and drop "
+        "entities that fail. true: all validators; false: none; omit: the server's setting.",
+    )
 
 
 class RedactRequest(ExtractRequest):
@@ -79,6 +85,8 @@ class HealthResponse(BaseModel):
     model: str
     device: str
     model_loaded: bool
+    schema_pack: str
+    validators: list[str]
 
 
 def create_app(settings: Settings | None = None, pipeline: Pipeline | None = None) -> FastAPI:
@@ -129,13 +137,17 @@ def create_app(settings: Settings | None = None, pipeline: Pipeline | None = Non
             model=backend.model_id,
             device=backend.device,
             model_loaded=backend.loaded,
+            schema_pack=pipeline.schema.name,
+            validators=sorted(pipeline.validators),
         )
 
     @app.post("/extract", response_model=ExtractResponse)
     def extract(request: ExtractRequest) -> ExtractResponse:
         check_size(request.text)
         try:
-            entities = pipeline.extract(request.text, request.labels, request.threshold)
+            entities = pipeline.extract(
+                request.text, request.labels, request.threshold, request.validate_entities
+            )
         except OffsetError:
             raise
         except ValueError as error:
@@ -147,7 +159,13 @@ def create_app(settings: Settings | None = None, pipeline: Pipeline | None = Non
         check_size(request.text)
         try:
             strategy = build_strategy(settings, request.strategy, request.mask_char)
-            result = pipeline.redact(request.text, strategy, request.labels, request.threshold)
+            result = pipeline.redact(
+                request.text,
+                strategy,
+                request.labels,
+                request.threshold,
+                request.validate_entities,
+            )
         except OffsetError:
             raise
         except ValueError as error:

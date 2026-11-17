@@ -11,7 +11,10 @@ def test_defaults():
     settings = load_settings(env={})
     assert settings == Settings()
     assert settings.backend == "gliner2" and settings.model is None
-    assert settings.labels == DEFAULT_LABELS
+    assert settings.labels is None, "labels default to the schema pack's"
+    assert settings.schema_pack == "pii" and settings.validators == ()
+    pipeline = build_pipeline(Settings(device="cpu"))
+    assert pipeline.labels == DEFAULT_LABELS and pipeline.validators == frozenset()
     assert (settings.threshold, settings.overlap_tokens, settings.iou_threshold) == (0.5, 64, 0.5)
 
 
@@ -102,3 +105,58 @@ def test_build_strategy():
     assert build_strategy(settings).name == "mask"
     assert build_strategy(settings, "placeholder").name == "placeholder"
     assert build_strategy(settings, "hash").name == "hash"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("on", ("all",)),
+        ("ALL", ("all",)),
+        ("true", ("all",)),
+        ("off", ()),
+        ("none", ()),
+        ("0", ()),
+        ("ssn, credit card number", ("ssn", "credit card number")),
+    ],
+)
+def test_validators_setting_is_a_switch_or_a_label_list(value, expected):
+    assert load_settings(env={"PII_VALIDATORS": value}).validators == expected
+
+
+def test_validators_setting_accepts_json_booleans_and_lists(tmp_path):
+    config = tmp_path / "pii.json"
+    config.write_text(json.dumps({"validators": True}))
+    assert load_settings(env={}, config_file=config).validators == ("all",)
+    config.write_text(json.dumps({"validators": ["email"], "schema_pack": "pii-extended"}))
+    settings = load_settings(env={}, config_file=config)
+    assert settings.validators == ("email",) and settings.schema_pack == "pii-extended"
+
+
+def test_validators_are_resolved_against_the_schema_pack():
+    on = build_pipeline(Settings(device="cpu", validators=("all",)))
+    assert on.validators == {"email", "phone number", "credit card number", "ssn"}
+
+    some = build_pipeline(Settings(device="cpu", validators=("social security number",)))
+    assert some.validators == {"ssn"}, "aliases resolve to the pack's key"
+
+    extended = build_pipeline(Settings(device="cpu", schema_pack="pii-extended", validators="on"))
+    assert "ip address" in extended.validators
+    assert extended.labels[-3:] == ("date of birth", "ip address", "medical record number")
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"PII_SCHEMA_PACK": "nope"},
+        {"PII_VALIDATORS": "person"},  # the pack has no validator for names
+        {"PII_VALIDATORS": "ip address"},  # only in pii-extended
+    ],
+)
+def test_unknown_pack_or_validator_is_rejected(env):
+    with pytest.raises(ValidationError):
+        load_settings(env=env)
+
+
+def test_explicit_labels_override_the_pack_labels():
+    pipeline = build_pipeline(Settings(device="cpu", labels=("email",), schema_pack="pii-extended"))
+    assert pipeline.labels == ("email",)

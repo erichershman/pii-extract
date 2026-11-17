@@ -21,6 +21,7 @@ class Harness:
         return Pipeline(
             FakeBackend(budget=settings.window_tokens or 64),
             labels=settings.labels,
+            validators=settings.validators,
             threshold=settings.threshold,
             overlap_tokens=min(settings.overlap_tokens, 4),
         )
@@ -155,3 +156,40 @@ def test_usage_errors_exit_with_a_message(cli, argv):
 def test_invalid_utf8_input_is_reported(cli):
     with pytest.raises(SystemExit, match="not valid UTF-8"):
         cli("extract", stdin=b"\xff\xfe broken")
+
+
+def test_validators_flag(cli):
+    # The fake model reports this 6-digit "phone"; it has too few digits to be one.
+    import re
+
+    from fakes import _PATTERNS, PHONE
+
+    original = cli.factory
+
+    def loose(settings):
+        pipeline = original(settings)
+        pipeline.backend.patterns = {**_PATTERNS, PHONE: re.compile(r"555-\d{3}(?:-\d{4})?")}
+        return pipeline
+
+    cli.factory = loose
+    text = "call 555-867-5309 or 555-867"
+
+    def phones(*flags):
+        return [e["text"] for e in json.loads(cli("extract", text, *flags))["entities"]]
+
+    assert phones() == ["555-867-5309", "555-867"]
+    assert phones("--validators", "on") == ["555-867-5309"]
+    assert phones("--validators", "phone number") == ["555-867-5309"]
+    assert phones("--validators", "email") == ["555-867-5309", "555-867"]
+    assert phones("--validators", "off") == ["555-867-5309", "555-867"]
+    assert cli.settings.validators == ()
+
+
+def test_schema_pack_flag_sets_default_labels(cli):
+    cli("extract", "x", "--schema-pack", "pii-extended", env={"PII_DEVICE": "cpu"})
+    assert cli.settings.schema_pack == "pii-extended" and cli.settings.labels is None
+
+
+def test_unknown_validator_is_a_usage_error(cli):
+    with pytest.raises(SystemExit, match="no validator"):
+        cli("extract", "x", "--validators", "person")

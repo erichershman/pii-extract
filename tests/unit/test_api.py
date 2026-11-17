@@ -1,7 +1,10 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
-from fakes import ALL_LABELS, FakeBackend
+from fakes import _PATTERNS as FAKE_PATTERNS
+from fakes import ALL_LABELS, CARD, FakeBackend
 from pii_extract.api import create_app
 from pii_extract.config import Settings
 from pii_extract.pipeline import Pipeline
@@ -12,9 +15,9 @@ TEXT = (
 )
 
 
-def make_client(budget: int = 64, **settings) -> tuple[TestClient, FakeBackend]:
+def make_client(budget: int = 64, validators=(), **settings) -> tuple[TestClient, FakeBackend]:
     backend = FakeBackend(budget)
-    pipeline = Pipeline(backend, labels=ALL_LABELS, overlap_tokens=4)
+    pipeline = Pipeline(backend, labels=ALL_LABELS, overlap_tokens=4, validators=validators)
     app = create_app(settings=Settings(**settings), pipeline=pipeline)
     return TestClient(app), backend
 
@@ -35,6 +38,8 @@ def test_healthz(client):
         "model": "fake/regex",
         "device": "cpu",
         "model_loaded": False,
+        "schema_pack": "pii",
+        "validators": [],
     }
 
 
@@ -192,3 +197,49 @@ def test_unverifiable_offsets_fail_the_request_instead_of_returning_wrong_spans(
             assert response.status_code == 500
             assert response.json() == {"detail": "span offset verification failed"}
             assert "Jane" not in response.text
+
+
+# "4111 1111 1111 1112" has the shape of a card number but fails the Luhn check.
+BAD_CARD_TEXT = "Cards 4111 1111 1111 1111 and 4111 1111 1111 1112, mail jane.doe@example.com"
+
+
+def loose_card_client(validators=()) -> TestClient:
+    backend = FakeBackend(64, patterns={**FAKE_PATTERNS, CARD: re.compile(r"\d{4}(?: \d{4}){3}")})
+    pipeline = Pipeline(backend, labels=ALL_LABELS, validators=validators)
+    return TestClient(create_app(settings=Settings(), pipeline=pipeline))
+
+
+def cards(response) -> list[str]:
+    return [e["text"] for e in response.json()["entities"] if e["label"] == CARD]
+
+
+def test_validators_are_off_by_default_and_switchable_per_request():
+    with loose_card_client() as test_client:
+        assert test_client.get("/healthz").json()["validators"] == []
+        default = test_client.post("/extract", json={"text": BAD_CARD_TEXT})
+        assert cards(default) == ["4111 1111 1111 1111", "4111 1111 1111 1112"]
+
+        checked = test_client.post("/extract", json={"text": BAD_CARD_TEXT, "validate": True})
+        assert cards(checked) == ["4111 1111 1111 1111"]
+        assert "jane.doe@example.com" in [e["text"] for e in checked.json()["entities"]]
+
+
+def test_server_side_validators_apply_unless_the_request_turns_them_off():
+    with loose_card_client(validators=["credit card number"]) as test_client:
+        assert test_client.get("/healthz").json()["validators"] == ["credit card number"]
+        assert cards(test_client.post("/extract", json={"text": BAD_CARD_TEXT})) == [
+            "4111 1111 1111 1111"
+        ]
+        off = test_client.post("/extract", json={"text": BAD_CARD_TEXT, "validate": False})
+        assert len(cards(off)) == 2
+
+
+def test_redact_with_validation_leaves_the_rejected_value_in_place():
+    # This is the trade-off validators make, stated as a test: the value that
+    # fails its check is no longer redacted.
+    with loose_card_client() as test_client:
+        safe = test_client.post("/redact", json={"text": BAD_CARD_TEXT}).json()["redacted_text"]
+        assert "1112" not in safe and "[CREDIT_CARD_2]" in safe
+        strict = test_client.post("/redact", json={"text": BAD_CARD_TEXT, "validate": True})
+        assert "4111 1111 1111 1112" in strict.json()["redacted_text"]
+        assert "4111 1111 1111 1111" not in strict.json()["redacted_text"]

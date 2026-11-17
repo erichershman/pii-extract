@@ -230,3 +230,19 @@ def test_redaction_is_consistent_across_windows():
     for item in result.replacements:
         assert text[item.span.start : item.span.end] == item.span.text
         assert result.text[item.redacted_start : item.redacted_end] == item.replacement
+
+
+def test_validators_run_after_the_merge_and_can_be_switched_per_call():
+    # The card is cut by the first window. Its fragment "4111 1111" would fail
+    # Luhn, but validation sees only the merged, whole number, which passes.
+    text = "aa bb cc dd ee ff gg hh 4111 1111 1111 1111 ii jj kk ll 555-867-5309"
+    backend = FakeBackend(10)
+    on = Pipeline(backend, labels=ALL_LABELS, overlap_tokens=4, validators=["all"])
+    assert found(on.extract(text)) == [(CARD, FULL_CARD), (PHONE, "555-867-5309")]
+
+    # Without overlap only the fragment exists: off keeps it, on drops it.
+    cut = Pipeline(FakeBackend(10), labels=[CARD], overlap_tokens=0)
+    assert found(cut.extract(text)) == [(CARD, "4111 1111")]
+    assert cut.extract(text, validate=True) == []
+    assert found(on.extract(text, validate=False)) == found(on.extract(text))
+    verify_spans(text, on.extract(text))

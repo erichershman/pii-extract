@@ -54,7 +54,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "tests"]
+pythonpath = ["src", "tests", "."]
 markers = [
     "model: needs model weights and the `models` extra (deselect with -m 'not model')",
 ]

@@ -169,3 +169,21 @@ def test_close_and_reload(gliner2_backend):
     after = pipe.extract(SPEC_EXAMPLE)  # lazy reload
     assert gliner2_backend.loaded
     assert [s.key for s in after] == [s.key for s in before]
+
+
+def test_text_without_final_punctuation_keeps_offsets_in_range(backend):
+    # gliner2 appends "." to unterminated input; a span ending at the very end
+    # of the text must not swallow that synthetic character.
+    texts = [
+        "Reference code for the customer record: ZZ 12 34 56 T",
+        "Card on file: 4111 1111 1111 1111",
+        "Call Jane Doe on 555-867-5309",
+        "Write to jane.doe@example.com",
+    ]
+    labels = [*LABELS, "reference code"]
+    for text in texts:
+        spans = Pipeline(backend, labels=labels, threshold=0.3).extract(text)
+        verify_spans(text, spans)
+        assert spans, f"expected a detection in {text!r}"
+        assert all(s.end <= len(text) for s in spans)
+        assert not any(s.text.endswith(".") for s in spans)

@@ -131,3 +131,52 @@ def test_lifecycle_is_delegated_to_the_session():
     assert backend.loaded
     backend.close()
     assert not backend.loaded
+
+
+class StubGliner2WithTerminator:
+    """Mimics gliner2 appending "." to unterminated input and tagging it."""
+
+    def __init__(self, entity: str):
+        self.entity = entity
+
+    def batch_extract_entities(self, texts, labels, **kwargs):
+        out = []
+        for text in texts:
+            seen = text if text.endswith((".", "!", "?")) else text + "."
+            start = seen.index(self.entity)
+            item = {
+                "text": self.entity,
+                "confidence": 0.9,
+                "start": start,
+                "end": start + len(self.entity),
+            }
+            out.append({"entities": {"phone number": [item]}})
+        return out
+
+
+def test_gliner2_appended_period_is_cut_back_off_the_span():
+    text = "call me on 555-867-5309"  # no sentence-final punctuation
+    backend = with_stub(Gliner2Backend(device="cpu"), StubGliner2WithTerminator("555-867-5309."))
+    (spans,) = backend.predict([text], ["phone number"], 0.5)
+    assert [(s.start, s.end, s.text) for s in spans] == [(11, 23, "555-867-5309")]
+    assert spans[0].end == len(text)
+
+
+def test_gliner2_span_that_is_only_the_appended_period_is_dropped():
+    backend = with_stub(Gliner2Backend(device="cpu"), StubGliner2WithTerminator("."))
+    assert backend.predict(["call me on 555-867-5309"], ["phone number"], 0.5) == [[]]
+
+
+def test_gliner2_real_final_period_is_kept_when_the_text_has_one():
+    # Here the period is the caller's own character, so the span may include it.
+    text = "call me on 555-867-5309."
+    backend = with_stub(Gliner2Backend(device="cpu"), StubGliner2WithTerminator("555-867-5309."))
+    (spans,) = backend.predict([text], ["phone number"], 0.5)
+    assert [(s.start, s.end, s.text) for s in spans] == [(11, 24, "555-867-5309.")]
+
+
+def test_gliner2_other_out_of_range_offsets_are_still_rejected():
+    stub = StubGliner2(shift=45)  # pushes the span well past the end of the text
+    backend = with_stub(Gliner2Backend(device="cpu"), stub)
+    with pytest.raises(OffsetError):
+        backend.predict([TEXT], LABELS, 0.5)

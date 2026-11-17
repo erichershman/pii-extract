@@ -90,14 +90,35 @@ class Gliner2Backend:
             # {"entities": {label: [{"text", "confidence", "start", "end"}, ...]}}
             for label, items in result.get("entities", {}).items():
                 for item in items:
+                    start, end, reported = _drop_synthetic_terminator(
+                        text, item["start"], item["end"], item.get("text")
+                    )
+                    if start >= end:
+                        continue  # the "entity" was only the appended period
                     results[index].append(
-                        checked_span(
-                            text,
-                            item["start"],
-                            item["end"],
-                            label,
-                            item["confidence"],
-                            item.get("text"),
-                        )
+                        checked_span(text, start, end, label, item["confidence"], reported)
                     )
         return results
+
+
+_SENTENCE_END = (".", "!", "?")
+
+
+def _drop_synthetic_terminator(
+    text: str, start: int, end: int, reported: str | None
+) -> tuple[int, int, str | None]:
+    """Undo the one edit gliner2 makes to its input before tokenizing.
+
+    The library appends "." to any text that does not already end in ".", "!"
+    or "?". The model therefore sees one token we never sent, at offset
+    ``len(text)``, and may include it in an entity that ends there, reporting
+    ``end == len(text) + 1``. Because the character is always appended and
+    never inserted, every other offset is unaffected; the only correction
+    needed is to cut that one position back off. Anything else out of range
+    is left alone for ``checked_span`` to reject.
+    """
+    if end == len(text) + 1 and not text.endswith(_SENTENCE_END):
+        end -= 1
+        if reported is not None and reported.endswith("."):
+            reported = reported[:-1]
+    return start, end, reported

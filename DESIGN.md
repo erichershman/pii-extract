@@ -189,8 +189,10 @@ Rules, in order:
 2. **Same label, overlapping, IoU < threshold: boundary disagreement.** The
    windows agree these characters are PII of this type but not where the
    entity ends. Merge into the **union**, score = max.
-3. **Different labels, any overlap: conflict.** Winner takes all; the best
-   candidate stays and overlapping candidates with other labels are dropped.
+3. **Different labels, any overlap: conflict.** The best candidate wins the
+   *label*. The loser is not discarded: any of its characters that no winner
+   covers are absorbed into the winner beside them, so the winner grows to
+   the union of the two spans.
 
 "Best" is a total order: **not clipped**, then higher score, then longer span,
 then earlier start, then label alphabetically. Being total makes the result
@@ -215,20 +217,47 @@ fragments higher (0.99 vs 0.90) to prove the rule is what saves the result,
 and `test_entity_split_across_a_window_boundary` checks the same thing on the
 real models.
 
-**The cross-label rule, and why it is not also a union.** A union of spans
-with different labels has no label. Something must win, and confidence is the
-only evidence available. The typical case is nested: `jane.doe@example.com`
-as email (0.99) containing `jane.doe` as person (0.6); the email wins and
-nothing is exposed.
+**The cross-label rule: one label, union of characters.** A span cannot carry
+two labels, so something must win, and confidence is the only evidence
+available. But losing the label is not a reason to lose coverage. The winner
+keeps its label and score and is extended over whatever the loser flagged
+that no winner already covers:
 
-**Known limitation.** If two different-label spans *partially* overlap, the
-loser's non-overlapping characters are dropped along with it and would not be
-redacted. This is rare (it needs two windows to disagree on both label and
-boundaries) but it is the one place the merge is not fail-closed. The fix is
-to trim the loser to its remainder instead of dropping it; it is in
-NEXT_STEPS.
+| Winner | Loser | Result |
+|---|---|---|
+| `jane.doe@example.com` email 0.99 | `jane.doe` person 0.6 (nested) | email, unchanged |
+| `Jane Doe` person 0.9 | `Doe Smith` organization 0.6 (partial) | person `Jane Doe Smith` |
+| `Doe` person 0.95 | `Jane Doe Smith` organization 0.5 (contains the winner) | person `Jane Doe Smith` |
 
-A second residual risk: a fragment that does not reach the window edge is not
+The first version dropped the loser whole, which exposed `Smith` in the second
+row and both outer words in the third. That was the one place the merge was
+not fail-closed, and it is now covered by regression tests.
+
+Two details make this well defined:
+
+- *A loser between two winners.* If B loses to A on its left and C on its
+  right, the part of B that neither covers goes to the higher-priority winner.
+  The other winner is left exactly as detected.
+- *Several losers.* Losers are absorbed best-first, each measured against the
+  winners **as already grown**, so two losers can never push two winners into
+  each other. The output stays flat; a test asserts it.
+
+The cost is honest to state: in a conflict, the winner's span can be wider
+than what the model reported under that label. Extraction consumers get a
+span that says "person" over characters another candidate called
+"organization". For a redactor that is the right way to be wrong.
+
+**What can still be discarded, and the knob for it.** Rules 2 and 3 never drop
+a flagged character. Rule 1 does, deliberately: when two detections of one
+entity nearly coincide, the weaker one's extra characters are treated as
+boundary noise. `iou_threshold` controls this. At `1.0` only exact duplicates
+count as duplicates, everything else is unioned, and the output covers every
+character any candidate flagged; the randomized merge test asserts exactly
+that property. The default stays at 0.5, which keeps spans tight when windows
+agree. Setting it to 1.0 is the strict-coverage mode for redaction-only
+deployments.
+
+**Residual risk.** A fragment that does not reach the window edge is not
 marked clipped. A model that reports only the first two groups of a card
 number three tokens before the cut would compete on score alone.
 
